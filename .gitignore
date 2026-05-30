@@ -1,0 +1,11 @@
+# 운영체제
+.DS_Store
+Thumbs.db
+
+# 에디터
+.vscode/
+.idea/
+
+# 로그/임시
+*.log
+node_modules/

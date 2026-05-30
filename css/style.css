@@ -1,0 +1,52 @@
+:root {
+  --bg: #1b1f2a;
+  --fg: #e8ecf1;
+  --accent: #6cc6ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+
+#app {
+  text-align: center;
+  padding: 1rem;
+}
+
+.title {
+  margin: 0 0 1rem;
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  color: var(--accent);
+}
+
+#game {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #0e1117;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.hint {
+  margin-top: 1rem;
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
