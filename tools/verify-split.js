@@ -4,7 +4,7 @@ const vm = require("vm");
 const cp = require("child_process");
 
 // index.html 로드 순서(검증 대상). scenes.js는 SceneManager 정의.
-const order = ["data", "map", "camera", "input", "sprites", "effects", "combat", "main", "projectiles", "scenes"]
+const order = ["data", "map", "camera", "input", "sprites", "effects", "combat", "main", "enemy", "render", "projectiles", "scenes"]
   .map((n) => "js/" + n + ".js");
 
 // 1) 합쳐서 로드 시뮬레이션 ----------------------------------------------------
