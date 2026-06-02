@@ -121,12 +121,76 @@ try {
   // 봉인된 키디언은 비비 재포식 ripple에도 살아나지 않는다(부활 금지).
   applyDevourRipple(bibi2);
   const sealStaysDead = !kid.alive;
+  // ===== 다야 패턴(dayaPatterns): P1 부채꼴 · P2 가시 · P3 비 =====
+  const dayaP = enemies.find((e) => e.role === "daya");
+  // 연속 같은 패턴 금지: 굴림을 반복해 직전 인덱스가 다시 나오지 않는지.
+  let prevIdx = -1, noRepeat = true;
+  for (let i = 0; i < 40; i++) {
+    projectiles.length = 0; dayaSpikes.length = 0; dayaRainQueue.length = 0;
+    fireDayaPattern(dayaP);
+    if (dayaP.dayaLastPattern === prevIdx) noRepeat = false;
+    prevIdx = dayaP.dayaLastPattern;
+  }
+  projectiles.length = 0; dayaSpikes.length = 0; dayaRainQueue.length = 0;
+  // P1 부채꼴: 3발 incoming.
+  fireDayaFan(dayaP);
+  const fanOk = projectiles.length === 3 && projectiles.every((p) => p.kind === "dayaShot" && p.state === "incoming");
+  // P1 반사: 한 발 패링 → reflected + 플레이어 방향(facing) 수평·무피해.
+  const rshot = projectiles[0];
+  player.facing = 1;
+  parryDayaShot(rshot);
+  const reflectedOk = rshot.state === "reflected" && rshot.vx > 0 && rshot.vy === 0 && rshot.damage === 0;
+  // 반사체가 비비를 맞히면 reflectDamage(비비를 되살리고, 반사체를 비비 hurtbox
+  // 중앙에 겹쳐 둔다 — 반사체는 vy=0 수평이라 세로 위치를 정확히 맞춰야 닿는다).
+  const bibiR = enemies.find((e) => e.role === "bibi");
+  bibiR.alive = true; bibiR.hp = 50; bibiR.shieldCharges = 0; bibiR.groggyTime = 0; bibiR.permaGroggy = false;
+  bibiR.x = 400; bibiR.y = 400;
+  const bhb = getHurtbox(bibiR);
+  rshot.x = bhb.x + bhb.w / 2 - rshot.w / 2;
+  rshot.y = bhb.y + bhb.h / 2 - rshot.h / 2;
+  const bibiHp0 = bibiR.hp;
+  for (let i = 0; i < 30 && rshot.alive; i++) updateDayaShot(rshot, 0.016);
+  const reflectHitsBibi = bibiR.hp < bibiHp0;
+  projectiles.length = 0;
+  // P2 가시: 발동 시 telegraph, 시간 경과 후 active로 솟아 플레이어 피격.
+  player.dead = false;
+  spawnDayaSpike(dayaP);
+  const spikeTeleOk = dayaSpikes.length === 1 && dayaSpikes[0].state === "telegraph";
+  for (let i = 0; i < 130; i++) updateDayaSpikes(0.016); // ~2.08s > spikeTelegraph(2.0)
+  const spikeBecameActive = dayaSpikes.length === 0 || dayaSpikes[0].state === "active";
+  dayaSpikes.length = 0;
+  const phb2 = getHurtbox(player);
+  dayaSpikes.push({ x: phb2.x + phb2.w / 2, surfaceY: player.y + player.h, state: "active", t: 0, shooter: dayaP, hitPlayer: false, alive: true });
+  const spkHp0 = player.hp;
+  for (let i = 0; i < 20; i++) updateDayaSpikes(0.016);
+  const spikeHit = player.hp < spkHp0;
+  dayaSpikes.length = 0;
+  // P3 비: 20개 예약 → 스폰. 한 방울을 공격 히트박스에 겹쳐 패링 소멸.
+  scheduleDayaRain(dayaP);
+  const rainQueued = dayaRainQueue.length === 20;
+  for (let i = 0; i < 200; i++) processDayaRain(0.016);
+  const rainSpawnOk = projectiles.filter((p) => p.kind === "rainDrop").length > 0;
+  const drop = projectiles.find((p) => p.kind === "rainDrop");
+  let rainParryOk = false;
+  if (drop) {
+    player.attack = ATTACKS.playerSlash; player.attackElapsed = 0.05; player.attackDir = 1;
+    const ahb = getAttackHitbox();
+    drop.x = ahb.x + 2; drop.y = ahb.y + 2; drop.parryLock = 0;
+    updateRainDrop(drop, 0.016);
+    rainParryOk = !drop.alive;
+    player.attack = null;
+  }
+  projectiles.length = 0; dayaRainQueue.length = 0;
+  const dayaOk = "연속금지=" + noRepeat + " 부채꼴=" + fanOk + " 반사=" + reflectedOk + " 반사→비비=" + reflectHitsBibi +
+    " 가시예고=" + spikeTeleOk + " 가시발동=" + spikeBecameActive + " 가시피격=" + spikeHit +
+    " 비예약=" + rainQueued + " 비낙하=" + rainSpawnOk + " 비패링=" + rainParryOk;
   globalThis.__smoke = "OK (적 " + enemies.length + ", 잔여 투사체 " + projectiles.length +
     ", 다야 방어력 " + dayaDefBefore.toFixed(2) + "→" + dayaDefAfter.toFixed(2) +
     ", 방어막 흡수=" + shieldOk + " 재시전=" + recast +
     ", 포식범위3배=" + devourBoxOk + " 포식처치=" + devourKilled + " 윈드업경로=" + devourLockRan +
     ", 키디언 라인발사=" + lineFired + " 라인피격=" + lineHit + " 봉인=" + kidSealed +
-    ", 광폭화=" + enraged + "(다야최저=" + dayaMin + " 패링불가=" + enrageNoParry + " 쿨3배=" + fastCd + ") 봉인유지=" + sealStaysDead + ")";
+    ", 광폭화=" + enraged + "(다야최저=" + dayaMin + " 패링불가=" + enrageNoParry + " 쿨3배=" + fastCd + ") 봉인유지=" + sealStaysDead +
+    "\\n    다야패턴[" + dayaOk + "])";
 } catch (e) { globalThis.__smoke = "FAIL: " + e.message + "\\n" + (e.stack || ""); }
 `;
 const combined = order.map((f) => "\n//=== " + f + " ===\n" + fs.readFileSync(f, "utf8")).join("\n") + driver;

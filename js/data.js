@@ -165,11 +165,30 @@ const ENEMY_AI = {
   benny: { chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "bennySlash", special: { kind: "rangeReplace", attack: "bennyStruggle", cooldown: 6 }, floorPref: 1 },
   lupo: { chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "enemySwing", special: { kind: "blink", attack: "lupoBlink", cooldown: 5 }, floorPref: -1 },
   tig: { chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "enemySwing", special: { kind: "dash", attack: "tigDash", cooldown: 5, needSameRow: true }, floorPref: 0 },
-  // 다야(2번 보스, 앵커): 맨 오른쪽 1층에 근엄하게 앉은 정지형 탱커. 추격·공격을
-  // 하지 않고(stationary) 받기만 한다 — 공격 패턴은 아직 미정(wiki open_question).
-  // 극단적으로 단단함은 방어력(0.99)으로 표현한다(makeEnemy defense 인자). 비비 단검
-  // 패링/비비 포식으로 이 방어력이 깎이는 연동은 비비 구현 때 붙인다.
-  daya: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 다야(2번 보스, 앵커): 맨 오른쪽 1층에 근엄하게 앉은 정지형 탱커. 추격·근접은
+  // 하지 않고(stationary) 받기만 하지만, 제자리에서 patterns(projectiles.js의
+  // dayaPatterns)로 원거리 견제를 한다. 극단적으로 단단함은 방어력(0.99)으로 표현하고
+  // (makeEnemy defense 인자), 비비 단검 패링/비비 포식으로 그 방어력이 깎인다.
+  // patterns: cooldown초마다 3패턴 중 하나를 굴려 발동한다(직전과 같은 패턴은 연속 금지).
+  //   P1 부채꼴(fan): 발동 시점의 플레이어를 정조준한 1발 + 위아래 ±fanSpread(rad)로
+  //     벌어진 2발(총 fanCount발)을 shotSpeed로 쏜다. 맞으면 shotDamage. 패링하면
+  //     '플레이어가 보는 방향(facing)'으로 수평 반사(reflectSpeed)되며, 반사체가 비비를
+  //     맞히면 reflectDamage(=3), 다야/키디언을 맞히면 피격 연출만(노데미지)·소멸.
+  //   P2 가시(spike): 발동 순간 플레이어 발밑 바닥에 위험표시 → spikeTelegraph초 뒤
+  //     그 자리에서 가시가 spikeRise초에 걸쳐 솟아 spikeActive초간 머문다(spikeDamage).
+  //     패링 불가 — 회피 전용(긴 예고가 회피 시간).
+  //   P3 비(rain): 맵 가로를 rainSlot(px)으로 나눈 칸 중 랜덤으로 rainCount개를
+  //     rainInterval초마다 1~2개씩 화면 위에서 떨군다(rainSpeed). 맞으면 rainDamage,
+  //     패링하면 그냥 부서진다(반사 없음).
+  daya: {
+    chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true,
+    patterns: {
+      cooldown: 10,
+      fanCount: 3, fanSpread: 0.32, shotSpeed: 300, shotDamage: 1, reflectSpeed: 420, reflectDamage: 3,
+      spikeTelegraph: 2.0, spikeRise: 0.15, spikeActive: 0.5, spikeDamage: 1,
+      rainCount: 20, rainSlot: 150, rainInterval: 0.1, rainSpeed: 300, rainDamage: 1,
+    },
+  },
   // 비비(2번, 교란자): 다야보다 느리게 돌아다니며 근접 시 휘두른다. 층 선호 0(티그와
   // 동일 추격경로). altBasic = 근접 공격 시 chance 확률로 basic 대신 쓰는 대체 공격
   // — 비비는 1/4로 패링 불가 강타(#2). 방어막(#5)은 이후 단계.

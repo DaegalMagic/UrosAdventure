@@ -35,16 +35,28 @@ const PROJ_BOUNDS_MARGIN = 48; // 이 밖으로 나가면 소멸
 const LINE_THICK = 16; // 라인 판정/렌더 두께(px). 라인 중심에서 ±절반이 판정
 const LINE_TELE_W = 4; // 예고선(telegraph)의 가는 심지 두께(px)
 
+// 다야 패턴(dayaPatterns) 박스. 수치 규칙은 데이터(ai.patterns)에서, 폭/연출만 여기.
+const DAYA_SHOT_W = 18; // P1 부채꼴 투사체(칼날) 박스
+const DAYA_SHOT_H = 8;
+const RAIN_W = 12; // P3 낙하 투사체 박스
+const RAIN_H = 20;
+const SPIKE_W = 44; // P2 가시 한 더미의 폭(판정/렌더 공용)
+const SPIKE_H = 40; // 다 솟았을 때 표면 위로 솟는 높이
+
 // ---- 상태 ----
 let projectiles = []; // 살아있는 투사체
 let pendingDaggers = []; // 시차 발사 대기열: { delay, shooter }
 let lines = []; // 키디언 직선 공격: { axis, pos, state, t, shooter, hitPlayer, alive }
+let dayaSpikes = []; // 다야 P2 가시: { x, surfaceY, state, t, shooter, hitPlayer, alive }
+let dayaRainQueue = []; // 다야 P3 낙하 대기열: { delay, x, shooter }
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
   projectiles = [];
   pendingDaggers = [];
   lines = [];
+  dayaSpikes = [];
+  dayaRainQueue = [];
 }
 
 // from→to 단위벡터 × speed.
@@ -321,15 +333,216 @@ function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
 }
 
+// ---- 다야 패턴(dayaPatterns) ----
+// 다야는 정지형이라 enemy.attack(근접 FSM)을 쓰지 않고, 여기서 cooldown초마다 3패턴
+// (P1 부채꼴 · P2 가시 · P3 비) 중 직전과 다른 하나를 굴려 발동한다. 쿨/수치는
+// 데이터(ai.patterns)에서 읽는다. 그로기/사망 중엔 쉰다(다야는 그로기되진 않지만 가드).
+function updateDayaPatterns(dt) {
+  for (const e of enemies) {
+    if (!e.alive || !e.ai.patterns) continue;
+    if (e.permaGroggy || e.groggyTime > 0) continue;
+    const pat = e.ai.patterns;
+    if (e.dayaCd == null) e.dayaCd = pat.cooldown; // 첫 발동까지 풀쿨 대기
+    e.dayaCd -= dt;
+    if (e.dayaCd <= 0) {
+      fireDayaPattern(e);
+      e.dayaCd = pat.cooldown;
+    }
+  }
+}
+
+// 3패턴 중 직전과 다른 하나를 골라 발동(연속 같은 패턴 금지).
+function fireDayaPattern(e) {
+  let idx;
+  do { idx = Math.floor(Math.random() * 3); } while (idx === e.dayaLastPattern);
+  e.dayaLastPattern = idx;
+  if (idx === 0) fireDayaFan(e);
+  else if (idx === 1) spawnDayaSpike(e);
+  else scheduleDayaRain(e);
+}
+
+// P1 부채꼴: 발동 시점 플레이어 정조준 1발 + 위아래로 ±fanSpread씩 벌어진 발들(총
+// fanCount발). 각 발은 패링 가능하며, 패링하면 reflected로 전환된다(updateDayaShot).
+function fireDayaFan(e) {
+  const pat = e.ai.patterns;
+  const sx = projCenterX(e);
+  const sy = projCenterY(e);
+  const base = Math.atan2(projCenterY(player) - sy, projCenterX(player) - sx);
+  const half = (pat.fanCount - 1) / 2; // 중앙(=정조준) 기준 위아래 대칭 분포
+  for (let i = 0; i < pat.fanCount; i++) {
+    const a = base + (i - half) * pat.fanSpread;
+    const p = makeProjectile(sx, sy, Math.cos(a) * pat.shotSpeed, Math.sin(a) * pat.shotSpeed, {
+      w: DAYA_SHOT_W, h: DAYA_SHOT_H, kind: "dayaShot", damage: pat.shotDamage, parryable: true,
+    });
+    p.state = "incoming"; // incoming(플레이어 조준) → (패링)reflected(플레이어 방향)
+    p.reflectDamage = pat.reflectDamage; // 반사체가 비비를 맞힐 때 피해
+    p.reflectSpeed = pat.reflectSpeed;
+    projectiles.push(p);
+  }
+}
+
+// 다야 P1 투사체 패링: '플레이어가 보는 방향(facing)'으로 수평 반사. 반사 중엔
+// 플레이어를 때리지 않고(damage 0) 적에게만 작용한다(updateDayaShot의 reflected).
+function parryDayaShot(p) {
+  parryFlash = 0.15;
+  TimeControl.freeze(PARRY_HIT_STOP);
+  p.parryLock = PROJ_PARRY_LOCK;
+  p.state = "reflected";
+  p.parryable = false;
+  p.damage = 0;
+  p.vx = player.facing * p.reflectSpeed;
+  p.vy = 0;
+  p.angle = player.facing > 0 ? 0 : Math.PI;
+}
+
+function updateDayaShot(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  if (p.state === "incoming") {
+    // 예고 없이 날아오지만 패링 가능: 플레이어 공격 히트박스와 겹치면 반사 성사.
+    if (p.parryable && p.parryLock <= 0) {
+      const atkHb = getAttackHitbox();
+      if (atkHb && aabbOverlap(atkHb, p)) { parryDayaShot(p); return; }
+    }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.angle = Math.atan2(p.vy, p.vx);
+    if (projOutOfBounds(p)) { p.alive = false; return; }
+    if (!player.dead && aabbOverlap(p, getHurtbox(player))) {
+      damagePlayer(p.damage);
+      p.alive = false;
+    }
+  } else { // reflected: 플레이어 방향으로 직진하며 적에게 작용(플레이어 무피해)
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (projOutOfBounds(p)) { p.alive = false; return; }
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (!aabbOverlap(p, getHurtbox(e))) continue;
+      // 비비를 맞히면 reflectDamage(=3). 다야/키디언이면 피격은 일어나되 노데미지
+      // (연출만 — 다야는 단검 진입점이 따로 있고, 키디언은 봉인으로만 처치).
+      if (e.role === "bibi") {
+        hitEnemy(e, p.reflectDamage);
+      } else {
+        TimeControl.freeze(ATTACK_HIT_STOP);
+        parryFlash = 0.1;
+      }
+      p.alive = false;
+      break;
+    }
+  }
+}
+
+// P2 가시: 발동 순간 플레이어 발밑(중심 x, 선 층의 표면 y)에 위험표시를 깐다.
+// 이후 위치는 고정 — telegraph 동안 따라가지 않으므로 옆으로 피하면 된다.
+function spawnDayaSpike(e) {
+  const footY = player.y + player.h;
+  dayaSpikes.push({
+    x: projCenterX(player),
+    surfaceY: floorSurfaceY(floorOf(footY)),
+    state: "telegraph",
+    t: 0,
+    shooter: e,
+    hitPlayer: false,
+    alive: true,
+  });
+}
+
+// 가시 한 더미의 현재 AABB(판정/렌더 공용). telegraph 중엔 높이 0(판정 없음),
+// active 중엔 spikeRise초에 걸쳐 SPIKE_H까지 솟는다(솟는 중에도 닿으면 피해).
+function spikeBox(s) {
+  const pat = s.shooter.ai.patterns;
+  const rise = s.state === "active" ? Math.min(1, s.t / pat.spikeRise) : 0;
+  const h = SPIKE_H * rise;
+  return { x: s.x - SPIKE_W / 2, y: s.surfaceY - h, w: SPIKE_W, h };
+}
+
+function updateDayaSpikes(dt) {
+  for (const s of dayaSpikes) {
+    if (!s.alive) continue;
+    if (!s.shooter.alive) { s.alive = false; continue; } // 다야 사망 시 진행 중 가시도 소멸
+    const pat = s.shooter.ai.patterns;
+    s.t += dt;
+    if (s.state === "telegraph") {
+      if (s.t >= pat.spikeTelegraph) { s.state = "active"; s.t = 0; s.hitPlayer = false; }
+    } else { // active: 가시 솟음 — 접촉 시 1회 피해(빠졌다 다시 들어오면 재적용)
+      if (!player.dead && aabbOverlap(spikeBox(s), getHurtbox(player))) {
+        if (!s.hitPlayer) { damagePlayer(pat.spikeDamage); s.hitPlayer = true; }
+      } else {
+        s.hitPlayer = false;
+      }
+      if (s.t >= pat.spikeActive) s.alive = false;
+    }
+  }
+  dayaSpikes = dayaSpikes.filter((s) => s.alive);
+}
+
+// P3 비: 맵 가로를 rainSlot으로 나눈 칸 중 랜덤으로 rainCount개를, rainInterval초마다
+// 1~2개씩 떨어뜨리도록 대기열에 예약한다(각자 화면 위에서 등속 낙하·패링 시 소멸).
+function scheduleDayaRain(e) {
+  const pat = e.ai.patterns;
+  const slots = Math.max(1, Math.floor(stage.widthPx / pat.rainSlot));
+  let delay = 0;
+  let made = 0;
+  while (made < pat.rainCount) {
+    const n = Math.random() < 0.5 ? 1 : 2; // 한 틱에 1~2개
+    for (let i = 0; i < n && made < pat.rainCount; i++) {
+      const col = Math.floor(Math.random() * slots);
+      const x = col * pat.rainSlot + pat.rainSlot / 2; // 칸 중심
+      dayaRainQueue.push({ delay, x, shooter: e });
+      made++;
+    }
+    delay += pat.rainInterval;
+  }
+}
+
+function processDayaRain(dt) {
+  const next = [];
+  for (const r of dayaRainQueue) {
+    if (!r.shooter.alive) continue; // 다야 사망 시 남은 낙하 취소
+    r.delay -= dt;
+    if (r.delay <= 0) spawnRainDrop(r);
+    else next.push(r);
+  }
+  dayaRainQueue = next;
+}
+
+function spawnRainDrop(r) {
+  const pat = r.shooter.ai.patterns;
+  const p = makeProjectile(r.x, -PROJ_BOUNDS_MARGIN, 0, pat.rainSpeed, {
+    w: RAIN_W, h: RAIN_H, kind: "rainDrop", damage: pat.rainDamage, parryable: true,
+  });
+  projectiles.push(p);
+}
+
+// P3 낙하 투사체: 패링하면 반사 없이 그냥 부서진다. 그 외엔 단순 직진 투사체와 동일.
+function updateRainDrop(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  if (p.parryable && p.parryLock <= 0) {
+    const atkHb = getAttackHitbox();
+    if (atkHb && aabbOverlap(atkHb, p)) {
+      parryFlash = 0.15;
+      TimeControl.freeze(PARRY_HIT_STOP);
+      p.alive = false;
+      return;
+    }
+  }
+  updateSimpleProjectile(p, dt);
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
   updateRangedEnemies(dt);
   processPendingDaggers(dt);
   updateLineShooters(dt);
   updateLines(dt);
+  updateDayaPatterns(dt);
+  processDayaRain(dt);
+  updateDayaSpikes(dt);
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
+    else if (p.kind === "dayaShot") updateDayaShot(p, dt);
+    else if (p.kind === "rainDrop") updateRainDrop(p, dt);
     else updateSimpleProjectile(p, dt);
   }
   projectiles = projectiles.filter((p) => p.alive);
@@ -339,10 +552,13 @@ function updateProjectiles(dt) {
 function renderProjectiles() {
   for (const p of projectiles) {
     if (!p.alive) continue;
+    if (p.kind === "rainDrop") { renderRainDrop(p); continue; } // 비는 세로 물방울로
     let color = "#c2ccd6"; // 강철빛(작은 단검 / 큰 단검 비행)
     if (p.kind === "big") {
       if (p.state === "stopped") color = "#ff7b00"; // 멈춤: 주황 경고(곧 폭발)
       else if (p.state === "returning") color = "#ffd166"; // 다야로: 금빛
+    } else if (p.kind === "dayaShot") {
+      color = p.state === "reflected" ? "#ffe066" : "#c77bff"; // 반사=금빛, 조준=다야 보라
     }
     ctx.save();
     ctx.translate(projCenterX(p) - camera.x, projCenterY(p) - camera.y);
@@ -355,6 +571,56 @@ function renderProjectiles() {
     ctx.restore();
   }
   renderLines(); // 키디언 직선 공격(예고/발사) — 단검 위에 그린다
+  renderDayaSpikes(); // 다야 P2 가시(예고/솟음)
+}
+
+// 다야 P3 낙하 투사체: 회전 없이 세로로 길쭉한 하늘빛 물방울(꼬리 밝게).
+function renderRainDrop(p) {
+  const x = projCenterX(p) - camera.x;
+  const y = projCenterY(p) - camera.y;
+  ctx.fillStyle = "#7fd4ff";
+  ctx.fillRect(x - p.w / 2, y - p.h / 2, p.w, p.h);
+  ctx.fillStyle = "#eaf7ff"; // 아래 끝(낙하 선두) 밝게
+  ctx.fillRect(x - p.w / 2, y + p.h / 2 - Math.max(3, p.h * 0.25), p.w, Math.max(3, p.h * 0.25));
+}
+
+// 다야 P2 가시: telegraph는 바닥 표면에 붉은 경고 띠(점멸), active는 솟아오르는 톱니.
+function renderDayaSpikes() {
+  for (const s of dayaSpikes) {
+    if (!s.alive) continue;
+    const cx = s.x - camera.x;
+    const sy = s.surfaceY - camera.y;
+    if (s.state === "telegraph") {
+      const pat = s.shooter.ai.patterns;
+      const blink = 0.4 + 0.4 * Math.abs(Math.sin(s.t * 8)); // 다가올수록 빠른 점멸 느낌
+      ctx.fillStyle = `rgba(200, 60, 80, ${blink})`;
+      ctx.fillRect(cx - SPIKE_W / 2, sy - 4, SPIKE_W, 4); // 표면에 붉은 경고 띠
+      // 솟을 폭/방향을 미리 알려주는 옅은 삼각 윤곽
+      ctx.fillStyle = `rgba(200, 60, 80, ${0.18 * blink})`;
+      drawSpikeTeeth(cx, sy, SPIKE_H * 0.5);
+    } else { // active: 실제로 솟은 높이만큼 톱니를 그린다
+      const b = spikeBox(s);
+      ctx.fillStyle = "#d94a64";
+      drawSpikeTeeth(cx, sy, b.h);
+      ctx.fillStyle = "#ffd0d8"; // 날끝 하이라이트
+      drawSpikeTeeth(cx, sy - Math.min(6, b.h * 0.3), b.h * 0.4);
+    }
+  }
+}
+
+// 표면(centerX, surfaceY)에서 height만큼 솟은 톱니 3개를 그린다(아래가 표면).
+function drawSpikeTeeth(centerX, surfaceY, height) {
+  const teeth = 3;
+  const tw = SPIKE_W / teeth;
+  for (let i = 0; i < teeth; i++) {
+    const lx = centerX - SPIKE_W / 2 + i * tw;
+    ctx.beginPath();
+    ctx.moveTo(lx, surfaceY);
+    ctx.lineTo(lx + tw / 2, surfaceY - height);
+    ctx.lineTo(lx + tw, surfaceY);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 // 키디언 라인: 예고(telegraph)는 가는 심지 + 페이드인 글로우(보라), 발사(firing)는
