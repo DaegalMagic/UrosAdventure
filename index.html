@@ -8,10 +8,21 @@
 </head>
 <body>
   <main id="app">
-    <h1 class="title">우로스의 모험</h1>
-    <canvas id="game" width="640" height="360"></canvas>
-    <p class="hint">방향키 또는 화면을 눌러 이동하세요.</p>
+    <canvas id="game" width="1000" height="600"></canvas>
   </main>
+  <!-- 로드 순서: 데이터/연출/전투(자기완결 또는 함수 선언)를 main.js 앞에 둔다.
+       함수·상태 참조는 전부 호출 시점(loop는 requestAnimationFrame로 다음 프레임)이라
+       파일 순서는 유연하지만, ENEMY_AI(data.js)·IIFE(effects.js)는 로드 시점에
+       평가되므로 자기완결이어야 한다(둘 다 그렇다). -->
+  <script src="js/data.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/camera.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/effects.js"></script>
+  <script src="js/combat.js"></script>
   <script src="js/main.js"></script>
+  <script src="js/projectiles.js"></script>
+  <script src="js/scenes.js"></script>
 </body>
 </html>

@@ -9,6 +9,9 @@ Thumbs.db
 # Claude Code 로컬 설정
 .claude/settings.local.json
 
+# 로컬 위키 (에이전트 운영 메모리 - 로컬 전용)
+.wiki/
+
 # 로그/임시
 *.log
 node_modules/
