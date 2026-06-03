@@ -220,22 +220,38 @@ function renderEnemies() {
       }
     }
 
-    // 셰이디 차원문 난사: open(열림) 상태의 현재 차원문을 보라색 포탈로 그린다(패링
-    // 윈도). 패링된 차원문은 흐리게 — 공격 순간 무피해라는 신호. gap(숨김) 동안엔
-    // 아무것도 그리지 않는다(즉시 숨김). 낙하 무기는 projectiles.js가 따로 그린다.
-    if (enemy.shadyBarrage && enemy.shadyBarrage.phase === "open") {
+    // 셰이디 차원문 난사:
+    //   - open(텔레그래프): 차원문을 보라색 포탈로 그린다. 순수 이펙트(피격 안 됨) —
+    //     "곧 여기서 검격이 나온다"는 신호일 뿐 이 단계엔 판정이 없다.
+    //   - strike(검격): 포탈은 숨고, 차원문→목표 회랑을 따라 검격을 밝게 그린다(이게
+    //     실제 공격). 패링된 검격은 흐리게 — 무피해라는 신호.
+    //   gap(숨김) 동안엔 아무것도 안 그린다. 낙하 무기는 projectiles.js가 따로 그린다.
+    if (enemy.shadyBarrage) {
       const g = enemy.shadyBarrage.gate;
-      const r = enemy.ai.shady.gateHitW / 2;
-      ctx.save();
-      ctx.globalAlpha = g.parried ? 0.3 : 1;
-      ctx.fillStyle = "rgba(150, 90, 220, 0.35)"; // 포탈 안쪽(보라)
-      ctx.beginPath();
-      ctx.arc(g.cx - camera.x, g.cy - camera.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(200, 140, 255, 0.95)"; // 포탈 테두리
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.restore();
+      const phase = enemy.shadyBarrage.phase;
+      if (phase === "open") {
+        const r = 24; // 포탈 시각 반경(판정과 무관한 연출값)
+        ctx.save();
+        ctx.fillStyle = "rgba(150, 90, 220, 0.35)"; // 포탈 안쪽(보라)
+        ctx.beginPath();
+        ctx.arc(g.cx - camera.x, g.cy - camera.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(200, 140, 255, 0.95)"; // 포탈 테두리
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.restore();
+      } else if (phase === "strike") {
+        ctx.save();
+        ctx.globalAlpha = g.parried ? 0.3 : 1;
+        ctx.strokeStyle = "rgba(220, 170, 255, 0.95)"; // 검격(밝은 보라 섬광)
+        ctx.lineWidth = enemy.ai.shady.gateStrikeHalf * 2; // 회랑 두께와 일치
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(g.cx - camera.x, g.cy - camera.y);
+        ctx.lineTo(g.targetX - camera.x, g.targetY - camera.y);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 }

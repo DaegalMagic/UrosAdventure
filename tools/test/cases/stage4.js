@@ -340,55 +340,77 @@ suite("스테이지4 · 셰이디", (t) => {
     }
   });
 
-  // 차원문 공격: open 0.3초 후, 미패링이고 사거리 안이면 dmg + 즉시 숨김(gap).
-  t.test("차원문 공격: 0.3초 후 사거리 내 플레이어에 dmg + gap 전이", () => {
+  // 차원문은 순수 이펙트(open 동안 피격 안 됨): open 단계에선 플레이어가 회랑 위에 있어도
+  // 피해/패링이 없다. gateOpen 종료 시 strike(검격)로 전이한다.
+  t.test("차원문: open 단계는 피격 없음(순수 이펙트) → strike 전이", () => {
     const g = loadGame();
     g.startStage("스테이지 4");
     const shady = g.bossOf("shady");
     const cfg = shady.ai.shady;
     g.startShadyBarrage(shady, cfg);
-    // 차원문을 플레이어 중심에 고정(사거리 안 보장).
     const pcx = g.player.x + g.player.w / 2, pcy = g.player.y + g.player.h / 2;
-    shady.shadyBarrage.gate = { cx: pcx, cy: pcy, parried: false };
+    shady.shadyBarrage.gate = { cx: pcx, cy: pcy, targetX: pcx, targetY: pcy, parried: false, struck: false };
     const hp0 = g.player.hp;
-    g.updateShadyBarrage(shady, 0.3, cfg); // open 종료 → 공격
+    g.updateShadyBarrage(shady, 0.2, cfg); // open 진행 중(아직 0.3 전)
+    expect(g.player.hp).toBe(hp0); // open 동안 무피해(차원문은 이펙트만)
+    expect(shady.shadyBarrage.phase).toBe("open");
+    g.updateShadyBarrage(shady, 0.1, cfg); // 누적 0.3 → strike 전이
+    expect(shady.shadyBarrage.phase).toBe("strike");
+  });
+
+  // 검격(strike): 회랑 안 플레이어에 dmg + 검격 종료 시 gap. 차원문이 아니라 '검격'이 친다.
+  t.test("검격: 회랑 안 플레이어에 dmg(미패링) + gap 전이", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    g.startShadyBarrage(shady, cfg);
+    const pcx = g.player.x + g.player.w / 2, pcy = g.player.y + g.player.h / 2;
+    shady.shadyBarrage.gate = { cx: pcx, cy: pcy, targetX: pcx, targetY: pcy, parried: false, struck: false };
+    const hp0 = g.player.hp;
+    g.updateShadyBarrage(shady, 0.3, cfg); // open → strike
+    expect(shady.shadyBarrage.phase).toBe("strike");
+    g.updateShadyBarrage(shady, 0.15, cfg); // strike: 회랑 안 → dmg + 종료 → gap
     expect(g.player.hp).toBe(hp0 - 1);
     expect(shady.shadyBarrage.phase).toBe("gap");
   });
 
-  // 차원문 회피: 공격 순간 사거리 밖(옆으로 비킴)이면 무피해.
-  t.test("차원문 회피: 사거리 밖이면 무피해", () => {
+  // 검격 회피: 회랑 밖(차원문→목표 통로에서 비킴)이면 무피해.
+  t.test("검격 회피: 회랑 밖이면 무피해", () => {
     const g = loadGame();
     g.startStage("스테이지 4");
     const shady = g.bossOf("shady");
     const cfg = shady.ai.shady;
     g.startShadyBarrage(shady, cfg);
     const pcy = g.player.y + g.player.h / 2;
-    shady.shadyBarrage.gate = { cx: g.player.x + 600, cy: pcy, parried: false }; // 멀리
+    const far = g.player.x + 600;
+    shady.shadyBarrage.gate = { cx: far, cy: pcy, targetX: far, targetY: pcy, parried: false, struck: false };
     const hp0 = g.player.hp;
-    g.updateShadyBarrage(shady, 0.3, cfg);
-    expect(g.player.hp).toBe(hp0); // 무피해
+    g.updateShadyBarrage(shady, 0.3, cfg); // open → strike
+    g.updateShadyBarrage(shady, 0.15, cfg); // strike: 회랑 멀어 무피해 → gap
+    expect(g.player.hp).toBe(hp0); // 회피
     expect(shady.shadyBarrage.phase).toBe("gap");
   });
 
   // 패링 누적 3회 → 난사 즉시 취소 + 3초 그로기(전역 게이지 무관) + 낙하 무기 없음.
-  t.test("패링: 누적 3회 → 취소 + 3초 그로기(게이지 무관)·낙하 없음", () => {
+  // 패링 대상은 차원문이 아니라 strike(검격)다.
+  t.test("패링: 검격 누적 3회 → 취소 + 3초 그로기(게이지 무관)·낙하 없음", () => {
     const g = loadGame();
     g.startStage("스테이지 4");
     const shady = g.bossOf("shady");
     const cfg = shady.ai.shady;
     g.startShadyBarrage(shady, cfg);
-    // 플레이어가 차원문 쪽(오른쪽)으로 평타 active 상태가 되게 세팅.
+    // 플레이어가 검격 쪽(오른쪽)으로 평타 active 상태가 되게 세팅.
     g.player.attack = g.eval("ATTACKS.playerSlash");
     g.player.attackElapsed = 0; // windup 0 → 즉시 active
     g.player.attackDir = 1;
     const pcx = g.player.x + g.player.w / 2, pcy = g.player.y + g.player.h / 2;
     const gauge0 = shady.groggyGauge;
     for (let i = 0; i < 3 && shady.shadyBarrage; i++) {
-      shady.shadyBarrage.gate = { cx: pcx + 30, cy: pcy, parried: false };
-      shady.shadyBarrage.phase = "open";
+      shady.shadyBarrage.gate = { cx: pcx + 30, cy: pcy, targetX: pcx, targetY: pcy, parried: false, struck: false };
+      shady.shadyBarrage.phase = "strike"; // 검격 단계에서만 패링 가능
       shady.shadyBarrage.t = 0;
-      g.updateShadyBarrage(shady, 0.016, cfg); // 이 차원문 패링
+      g.updateShadyBarrage(shady, 0.016, cfg); // 이 검격 패링
     }
     expect(shady.shadyBarrage == null).toBeTruthy(); // 취소
     expect(shady.groggyTime).toBe(3);
@@ -406,8 +428,9 @@ suite("스테이지4 · 셰이디", (t) => {
     g.player.hp = 99; // 피격 사망 노이즈 제거(완주만 확인)
     g.startShadyBarrage(shady, cfg);
     for (let i = 0; i < 6 && shady.shadyBarrage; i++) {
-      g.updateShadyBarrage(shady, 0.3, cfg); // open → 공격 → gap
-      g.updateShadyBarrage(shady, 0.2, cfg); // gap → 다음(마지막엔 완주 처리)
+      g.updateShadyBarrage(shady, 0.3, cfg);  // open → strike
+      g.updateShadyBarrage(shady, 0.15, cfg); // strike → gap
+      g.updateShadyBarrage(shady, 0.2, cfg);  // gap → 다음(마지막엔 완주 처리)
     }
     expect(shady.shadyBarrage == null).toBeTruthy();
     expect(g.shadyWeapons.length).toBe(1);

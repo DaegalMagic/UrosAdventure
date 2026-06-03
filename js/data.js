@@ -354,18 +354,21 @@ const ENEMY_AI = {
   // 차원문으로 등 뒤 순간이동 평타(shadyBlink)를 친다. gateCooldown초마다 '차원문 난사'
   // 패턴(updateShadyBarrage)을 발동한다.
   //   차원문 난사: gateCount개의 차원문을 플레이어 전/후방 콘(gateConeDeg=±70°, 상·하
-  //     40° 쐐기는 자연 제외)·gateDist(60px)에 차례로 열어, gateOpen초 후 공격(미패링·
-  //     사거리 내면 gateDamage) → 즉시 숨김 → gateGap초 뒤 다음. 차원문은 열린 동안
-  //     패링 가능 — 누적 gateParryCancel(3)회 패링 시 패턴 즉시 취소 + groggyTime초
-  //     그로기(전역 게이지와 무관: groggyDrains=false). gateCount회 완주 시 맵 최상단에서
-  //     거대 무기 낙하(가로 weaponWScale배·세로 weaponHScale배, 가속도 GRAVITY,
-  //     dmg weaponDamage, 패링 불가 — projectiles.js spawnShadyWeapon).
+  //     40° 쐐기는 자연 제외)·gateDist(60px)에 차례로 연다. 차원문 자체는 '피격 안 되는
+  //     순수 이펙트'(히트박스 없음) — gateOpen초 텔레그래프 후, 차원문에서 '검격(공격)'이
+  //     생성 시점 플레이어 자리(targetX/Y)를 향해 나온다(gateStrike초 동안 그 회랑이
+  //     판정). 검격을 마주 베면 패링(미패링·회랑 안이면 gateDamage), 회랑 밖으로 비키면
+  //     회피. 검격 → 즉시 차원문 숨김 → gateGap초 뒤 다음. 누적 gateParryCancel(3)회
+  //     패링 시 패턴 즉시 취소 + groggyTime초 그로기(전역 게이지와 무관: groggyDrains=
+  //     false). gateCount회 완주 시 맵 최상단에서 거대 무기 낙하(가로 weaponWScale배·
+  //     세로 weaponHScale배, 가속도 GRAVITY, dmg weaponDamage, 패링 불가 —
+  //     projectiles.js spawnShadyWeapon). 취소되면 낙하 없음.
   shady: {
     chaseSpeed: 0, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: null, special: null, floorPref: 0,
     shady: {
       fleeSpeed: 300, jumpInterval: 0.373, jumpChance: 0.1, approachDist: 500,
-      gateCooldown: 13, gateCount: 6, gateOpen: 0.3, gateGap: 0.2,
-      gateDist: 60, gateConeDeg: 70, gateHitW: 80, gateHitH: 80,
+      gateCooldown: 13, gateCount: 6, gateOpen: 0.3, gateStrike: 0.15, gateGap: 0.2,
+      gateDist: 60, gateConeDeg: 70, gateStrikeHalf: 24,
       gateDamage: 1, gateParryCancel: 3, groggyTime: 3,
       weaponWScale: 5, weaponHScale: 7, weaponDamage: 2,
     },

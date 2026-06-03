@@ -582,6 +582,9 @@ function updateShady(enemy, dt) {
 // 차원문 한 개를 플레이어 전방/후방 콘에 배치한다. 콘 = 플레이어 정면(facing) 또는
 // 후면(-facing) 기준 ±gateConeDeg(70°). 이 두 콘이 수평을 중심으로 ±70°씩 덮으면
 // 위/아래 각 40° 쐐기(콘 사이 빈틈)는 자연히 제외된다(스펙의 "상·하 40° 쐐기 제외").
+//   차원문 자체는 히트박스가 없는 순수 이펙트다. 0.3초 뒤 여기서 나올 '검격'이 노릴
+//   지점(targetX/Y)을 생성 시점의 플레이어 중심으로 박아 둔다 — 텔레그래프 동안 이
+//   지점에서 비켜나면 검격을 회피한다(검격은 플레이어를 재추적하지 않는다).
 function makeShadyGate(cfg) {
   const pcx = player.x + player.w / 2;
   const pcy = player.y + player.h / 2;
@@ -593,15 +596,23 @@ function makeShadyGate(cfg) {
   return {
     cx: pcx + Math.cos(a) * cfg.gateDist,
     cy: pcy + Math.sin(a) * cfg.gateDist,
-    parried: false, // 이 차원문을 패링했는가(패링하면 공격 순간 무피해)
+    targetX: pcx, targetY: pcy, // 검격이 향하는 지점(생성 시 플레이어 자리). 여기서 비키면 회피
+    parried: false, // 이 검격을 패링했는가(패링하면 무피해 + 누적 카운트)
+    struck: false,  // 이 검격이 이미 피해를 줬는가(검격당 1회)
   };
 }
 
-// 차원문 타격 박스(판정/렌더 공용): 차원문 중심에 gateHitW×gateHitH AABB. 차원문이
-// 플레이어 중심에서 60px 거리라, 이 박스가 차원문 쪽에서 플레이어 자리로 뻗어 친다 —
-// 차원문이 열린 동안(0.3초) 옆으로 비키면 공격 순간 빗나간다(회피), 마주 베면 패링.
-function shadyGateBox(gate, cfg) {
-  return { x: gate.cx - cfg.gateHitW / 2, y: gate.cy - cfg.gateHitH / 2, w: cfg.gateHitW, h: cfg.gateHitH };
+// 검격(공격) 판정 박스: 차원문(gate.cx,cy) → 목표 지점(targetX,targetY)을 잇는 회랑을
+// gateStrikeHalf만큼 부풀린 AABB. 차원문이 순수 이펙트인 동안(open)이 아니라 '검격'이
+// 나오는 strike 단계에서만 이 박스가 산다. 회랑 = 차원문에서 생성 시 플레이어 자리까지의
+// 통로라, 그 자리에 머물면 베이고 옆으로 비키면 빗나간다.
+function shadyStrikeBox(g, cfg) {
+  const half = cfg.gateStrikeHalf;
+  const minX = Math.min(g.cx, g.targetX) - half;
+  const minY = Math.min(g.cy, g.targetY) - half;
+  const maxX = Math.max(g.cx, g.targetX) + half;
+  const maxY = Math.max(g.cy, g.targetY) + half;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 // 차원문 난사 시작: 첫 차원문을 열고 시퀀서 상태를 건다(index 0..gateCount-1).
@@ -609,36 +620,42 @@ function startShadyBarrage(enemy, cfg) {
   enemy.shadyBarrage = { index: 0, t: 0, phase: "open", parries: 0, gate: makeShadyGate(cfg) };
 }
 
-// 차원문 난사 시퀀서. 차원문마다 open(열림·패링 윈도) → gateOpen초 후 공격(미패링·
-// 사거리 내면 dmg) → 즉시 숨김 → gap(gateGap초) → 다음 차원문. gateCount회 완주하면
-// 맵 최상단에서 거대 무기를 떨군다(spawnShadyWeapon). 누적 패링이 gateParryCancel(3)에
-// 닿으면 즉시 취소 + 그로기(별도 카운터 — 전역 그로기 게이지와 무관).
+// 차원문 난사 시퀀서. 차원문마다 open(이펙트 텔레그래프, 히트박스 없음) → strike(검격
+// 판정: 패링/피해/회피) → 즉시 숨김 → gap(다음까지 대기) → 다음 차원문. gateCount회
+// 완주하면 맵 최상단에서 거대 무기를 떨군다(spawnShadyWeapon). 누적 패링이
+// gateParryCancel(3)에 닿으면 즉시 취소 + 그로기(별도 카운터 — 전역 게이지와 무관).
 function updateShadyBarrage(enemy, dt, cfg) {
   const b = enemy.shadyBarrage;
+  const g = b.gate;
   b.t += dt;
 
+  // open: 차원문은 순수 이펙트(피격 안 됨). gateOpen초 텔레그래프 후 검격(strike)으로.
   if (b.phase === "open") {
-    const box = shadyGateBox(b.gate, cfg);
-    // 패링 윈도: 플레이어 공격 히트박스가 차원문과 겹치고 그쪽을 향해 베면 성사.
-    if (!b.gate.parried) {
+    if (b.t >= cfg.gateOpen) { b.phase = "strike"; b.t = 0; }
+    return;
+  }
+
+  // strike: 차원문에서 나온 '검격'. 이 동안만 패링/피해 판정(차원문 본체는 무관).
+  if (b.phase === "strike") {
+    const box = shadyStrikeBox(g, cfg);
+    // 패링: 플레이어 공격 히트박스가 검격 회랑과 겹치고 그쪽(차원문 방향)을 향해 베면 성사.
+    if (!g.parried) {
       const pHb = getAttackHitbox();
-      const gateDir = b.gate.cx >= player.x + player.w / 2 ? 1 : -1; // 차원문이 플레이어 기준 좌/우
-      if (pHb && player.attackDir === gateDir && aabbOverlap(pHb, box)) {
-        b.gate.parried = true;
+      const strikeDir = g.cx >= player.x + player.w / 2 ? 1 : -1; // 검격이 오는 방향(좌/우)
+      if (pHb && player.attackDir === strikeDir && aabbOverlap(pHb, box)) {
+        g.parried = true;
         b.parries += 1;
         parryFlash = 0.15;
         TimeControl.freeze(PARRY_HIT_STOP);
         if (b.parries >= cfg.gateParryCancel) { shadyCancelBarrage(enemy, cfg); return; }
       }
     }
-    // 공격 순간: 미패링이고 플레이어가 타격 범위 안이면 피해. 즉시 숨김 → gap.
-    if (b.t >= cfg.gateOpen) {
-      if (!b.gate.parried && !player.dead && aabbOverlap(box, getHurtbox(player))) {
-        damagePlayer(cfg.gateDamage);
-      }
-      b.phase = "gap";
-      b.t = 0;
+    // 미패링 피해(검격당 1회): 회랑 안에 있으면 베인다(옆으로 비켜 있으면 무피해=회피).
+    if (!g.parried && !g.struck && !player.dead && aabbOverlap(box, getHurtbox(player))) {
+      damagePlayer(cfg.gateDamage);
+      g.struck = true;
     }
+    if (b.t >= cfg.gateStrike) { b.phase = "gap"; b.t = 0; } // 검격 종료 → 즉시 숨김(gap)
     return;
   }
 
