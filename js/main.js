@@ -291,6 +291,16 @@ function startStage(name) {
     naia.floating = true;
     enemies = [ifrit, gabia, sila, naia];
     for (const e of enemies) e.group = enemies; // 서로(자기 포함) 참조(이후 연동용)
+  } else if (name === "스테이지 4") {
+    // 스테이지4(림/셰이디 2인 동시전, 보상=수의). 0단계(맵+뼈대)에선 둘 다 AI 없는
+    // 정지형 더미(stationary)다 — 림(추격/강타)·셰이디(도주/순간이동)·아공간 연동은
+    // 이후 단계에서 붙인다. 클리어 조건 = 림 + 셰이디 HP 0(아공간 연동 단계에서 연결).
+    // HP는 산정값 우선 100(BOSS_HP_TRIO 80과 SOLO 220 사이, 2인+아공간 복귀 보정). 1층 바닥에 배치.
+    const STAGE4_HP = 100;
+    const rim = makeEnemy(900, 500, "rim", STAGE4_HP); // 림: 1층 바닥 왼쪽-중앙
+    const shady = makeEnemy(1100, 500, "shady", STAGE4_HP); // 셰이디: 1층 바닥 오른쪽
+    enemies = [rim, shady];
+    for (const e of enemies) e.group = enemies; // 서로(자기 포함) 참조(아공간 연동용)
   } else {
     enemies = [makeEnemy(510, 580)]; // 임시: 표적 적 하나(발 기준 좌표)
   }

@@ -184,6 +184,31 @@ function makeStage3() {
   return grid.map((row) => row.join(""));
 }
 
+// 스테이지 4(림/셰이디 2인 동시전, 보상=수의). 사료스탕스/스테이지2와 같은 기본 4층
+// 좌표(DEFAULT_FLOOR_SURFACES_Y, 간격 80px)를 쓰되, 1층(바닥) 위가 넓게 트인 아레나다 —
+// 셰이디는 이 바닥에서 x축으로 멀리 도주하다 맵 끝 판정을 쓰고, 림은 같은 층에서 추격한다.
+//   메인 층 표면 행: 4층 row13(y260) / 3층 row17(y340) / 2층 row21(y420) / 1층 row25(y500).
+// 1층 바닥은 꽉 찬 #(두 보스가 빠지지 않게, row25~29). 2~4층엔 점프 회피용 원웨이
+// 발판(=)을 드문드문만 깐다(아레나를 넓게 비워 둠 — 림 내려찍기를 점프로 피하는 디딤돌).
+// 플레이어 스폰 P는 1층 왼쪽(바닥 바로 위). ※ 맵 형태는 제안 — 두 보스 동선에 맞춰 조정 가능.
+function makeStage4() {
+  const COLS = 75;
+  const ROWS = 30;
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill("."));
+  const put = (r, c, len, ch = "=") => {
+    for (let i = 0; i < len && c + i < COLS; i++) grid[r][c + i] = ch;
+  };
+  // 1층 바닥: 꽉 찬 #(적이 빠지지 않게, row25~29).
+  for (let r = 25; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = "#";
+  // 점프 회피용 원웨이 발판(=): 넓은 아레나를 유지하려 드문드문만.
+  put(21, 8, 5); put(21, 28, 6); put(21, 50, 6); put(21, 64, 5); // 2층(드문드문)
+  put(17, 16, 6); put(17, 50, 6);                                 // 3층(둘)
+  put(13, 32, 8);                                                 // 4층(가운데 하나)
+  // 플레이어 스폰: 1층 왼쪽(바닥 바로 위 칸).
+  grid[24][3] = "P";
+  return grid.map((row) => row.join(""));
+}
+
 // ---- 가비아 HP 연동 동적 붕괴(스테이지3 전용) ----
 // 가비아 HP가 임계에 도달할 때마다(enemy.js updateGabia가 호출) 발판층(2~4층)의 가로
 // 칸을 무작위로 무너뜨린다(stage.tiles 칸 제거, 누적). 1층(바닥)은 절대 건드리지 않는다
@@ -247,10 +272,10 @@ function shuffleInPlace(arr) {
   return arr;
 }
 
-// 2~7번 더미 맵(스테이지 2·3만 실제 맵). 너비를 조금씩 달리해 시각적으로 구분되게 한다.
+// 2~7번 맵(스테이지 2·3·4는 실제 맵, 5~7은 더미). 더미는 너비를 달리해 시각적으로 구분.
 STAGES["스테이지 2"] = makeDayaStage();
 STAGES["스테이지 3"] = makeStage3();
-STAGES["스테이지 4"] = makeFlatStage(60, 30, 26);
+STAGES["스테이지 4"] = makeStage4();
 STAGES["스테이지 5"] = makeFlatStage(64, 30, 28);
 STAGES["스테이지 6"] = makeFlatStage(58, 30, 22);
 STAGES["스테이지 7"] = makeFlatStage(62, 30, 30);

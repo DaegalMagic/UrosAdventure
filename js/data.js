@@ -301,6 +301,11 @@ const ENEMY_AI = {
       waveEvery: 3, waveWarnTime: 2, waveSpeedMult: 1.2, waveWidthMult: 3, waveDamage: 1, waveTickInterval: 1.0,
     },
   },
+  // ---- 스테이지4(림/셰이디 2인 동시전, 보상=수의) ----
+  // 0단계(맵+뼈대) 시점엔 둘 다 정지형 placeholder다(가만히 서 있는 더미). 실제 행동은
+  // 림=프롬프트1(추격/강타), 셰이디=프롬프트2(도주/순간이동), 아공간 연동=프롬프트3에서 붙인다.
+  rim: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  shady: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
 };
 function aiFor(role) {
   return ENEMY_AI[role] || ENEMY_AI.default;
