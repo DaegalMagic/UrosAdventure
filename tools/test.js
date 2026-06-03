@@ -18,12 +18,18 @@ for (const f of fs.readdirSync(casesDir).filter((f) => f.endsWith(".js")).sort()
 
 let pass = 0;
 let fail = 0;
+let todo = 0;
 const failures = [];
 
 for (const s of REGISTRY) {
   if (filter && !s.name.includes(filter)) continue;
   console.log("\n■ " + s.name);
   for (const t of s.tests) {
+    if (t.todo) {
+      todo++;
+      console.log("  ◦ " + t.name + "  (보류)");
+      continue;
+    }
     try {
       t.fn();
       pass++;
@@ -38,7 +44,7 @@ for (const s of REGISTRY) {
 }
 
 console.log("\n" + "─".repeat(48));
-console.log(`결과: ${pass} 통과, ${fail} 실패` + (filter ? ` (필터: "${filter}")` : ""));
+console.log(`결과: ${pass} 통과, ${fail} 실패, ${todo} 보류` + (filter ? ` (필터: "${filter}")` : ""));
 if (fail) {
   console.log("\n실패 상세:");
   for (const f of failures) console.log(`  • ${f.suite} › ${f.test}\n    ${f.error}`);

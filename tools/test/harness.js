@@ -133,7 +133,12 @@ function expect(actual) {
 const REGISTRY = [];
 function suite(name, fn) {
   const tests = [];
-  fn({ test: (caseName, caseFn) => tests.push({ name: caseName, fn: caseFn }) });
+  fn({
+    test: (caseName, caseFn) => tests.push({ name: caseName, fn: caseFn }),
+    // 아직 안 채운 검증 항목. 통과도 실패도 아닌 "보류"로 리포트되어, 다음에 채울
+    // 목록이 실행만 해도 그대로 보인다(exit code엔 영향 없음).
+    todo: (caseName) => tests.push({ name: caseName, todo: true }),
+  });
   REGISTRY.push({ name, tests });
 }
 
