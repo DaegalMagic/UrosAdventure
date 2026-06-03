@@ -807,18 +807,30 @@ function processNaiaLaserQueue(dt) {
   naiaLaserQueue = next;
 }
 
-// 레이저 한 발: aimPlayer면 발사 시점 플레이어 중심을 정조준, 아니면 완전 랜덤 각도로
-// 슈터 중심에서 길게 뻗는 선분을 telegraph로 띄운다.
+// 레이저 한 발: 시작점(ox,oy)에서 조준점(tx,ty)을 향해 길게 뻗는 선분을 telegraph로
+// 띄운다. aimPlayer(볼리 마지막 발)면 슈터(오른쪽 위 모서리)에서 플레이어 중심을 정조준.
+// 그 외(앞 발들)는 시작점이 맵 위/왼/오른쪽 변 중 랜덤 점, 조준점은 플레이어 중심
+// ±(aimSpreadX, aimSpreadY) 랜덤(빗나갈 수 있음).
 function spawnNaiaLaser(naia, aimPlayer) {
-  const ox = projCenterX(naia);
-  const oy = projCenterY(naia);
-  let angle;
+  const ph = getHurtbox(player);
+  const pcx = ph.x + ph.w / 2;
+  const pcy = ph.y + ph.h / 2;
+  let ox, oy, tx, ty;
   if (aimPlayer) {
-    const ph = getHurtbox(player);
-    angle = Math.atan2(ph.y + ph.h / 2 - oy, ph.x + ph.w / 2 - ox); // 플레이어 정조준
+    ox = projCenterX(naia);
+    oy = projCenterY(naia);
+    tx = pcx; // 플레이어 정조준
+    ty = pcy;
   } else {
-    angle = Math.random() * Math.PI * 2; // 완전 랜덤
+    const edge = Math.floor(Math.random() * 3); // 0=위, 1=왼, 2=오른쪽 변
+    if (edge === 0) { ox = Math.random() * stage.widthPx; oy = 0; }
+    else if (edge === 1) { ox = 0; oy = Math.random() * stage.heightPx; }
+    else { ox = stage.widthPx; oy = Math.random() * stage.heightPx; }
+    const cfg = naia.ai.naia;
+    tx = pcx + (Math.random() * 2 - 1) * cfg.aimSpreadX; // 플레이어 중심 ± 가로 산포
+    ty = pcy + (Math.random() * 2 - 1) * cfg.aimSpreadY; // ± 세로 산포
   }
+  const angle = Math.atan2(ty - oy, tx - ox);
   naiaLasers.push({
     ox, oy, angle,
     ex: ox + Math.cos(angle) * NAIA_LASER_LEN,

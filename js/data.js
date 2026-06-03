@@ -259,7 +259,9 @@ const ENEMY_AI = {
   // 나이아(오른쪽 위 모서리 저격수, 화면 밖). 추격·근접 없이(stationary) 제자리에서
   // 물줄기 레이저와 파도를 쏜다(projectiles.js updateNaia). floating이라 중력·충돌 면제.
   //   레이저: 한 번 발동에 laserVolley발을 laserVolleyGap초 간격으로 발사한다. 앞의
-  //     발들은 각도 완전 랜덤, 마지막 한 발만 발사 시점 플레이어를 정조준한다. 각 발은
+  //     발들은 시작점이 맵의 위/왼/오른쪽 변 중 랜덤한 한 점이고, 조준점은 플레이어
+  //     중심 ±(aimSpreadX, aimSpreadY) 범위의 랜덤 점이다(빗나갈 수 있음). 마지막 한
+  //     발만 슈터(오른쪽 위 모서리)에서 발사 시점 플레이어를 정조준한다. 각 발은
   //     laserTelegraph초 예고(패링 불가·회피 전용) → laserActive초 발사(두께 laserThick
   //     px 띠가 ON). 쿨 laserCd초(발동=볼리 전체), 데미지 laserDamage. 판정은 AABB가
   //     아니라 '점-선분 거리 ≤ laserThick/2'(회전된 띠라서). 레이저가 이프리트에 닿으면
@@ -273,7 +275,7 @@ const ENEMY_AI = {
     chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true,
     naia: {
       laserTelegraph: 1.2, laserActive: 1.2, laserCd: 12, laserDamage: 2, laserThick: 40,
-      laserVolley: 3, laserVolleyGap: 0.2, bossHit: 2,
+      laserVolley: 3, laserVolleyGap: 0.2, aimSpreadX: 350, aimSpreadY: 200, bossHit: 2,
       waveEvery: 3, waveWarnTime: 2, waveSpeedMult: 1.2, waveWidthMult: 3, waveDamage: 1, waveTickInterval: 1.0,
     },
   },
