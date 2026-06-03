@@ -91,7 +91,7 @@ function renderEnemies() {
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아" }[enemy.role];
+        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아", silaMob: "잡몹" }[enemy.role];
         if (label) ctx.fillText(label, edx + enemy.w / 2, edy + enemy.h / 2);
       }
     }
@@ -259,6 +259,10 @@ function render() {
   // 나이아 파도 주의표시(화면 고정): warn 단계에 카메라 왼쪽에서 점멸로 알린다.
   renderNaiaWaveWarning();
 
+  // 스테이지3 봉인 진행도(화면 고정): 실라/나이아는 화면 밖 모서리라 보이지 않으므로,
+  // 반사 화살 봉인 누적(sealHits/임계)을 우상단에 표시한다(봉인 = 발사/파도 중지).
+  renderStage3Seals();
+
   // 받는 피해 2배 디버프(비비 #2) 표시: 좌상단에 남은 시간을 붉게 알린다.
   if (player.vulnTime > 0) {
     ctx.fillStyle = "#ff6b6b";
@@ -288,4 +292,32 @@ function render() {
     ctx.lineWidth = 2;
     ctx.strokeRect(gx, gy, gw, gh);
   }
+}
+
+// 스테이지3 봉인 진행도(화면 고정 UI). 실라/나이아는 화면 밖 모서리 저격수라 머리 위
+// 표시가 보이지 않으므로, 반사 화살 봉인 누적을 우상단에 모아 보여준다. 봉인되면
+// "봉인됨"으로 바뀐다(나이아=레이저/파도 중지, 실라=화살 중지). 두 보스가 없으면 생략.
+function renderStage3Seals() {
+  const naia = enemies.find((e) => e.role === "naia");
+  const sila = enemies.find((e) => e.role === "sila");
+  if (!naia && !sila) return;
+  ctx.save();
+  ctx.font = "15px sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+  let y = 12;
+  for (const b of [naia, sila]) {
+    if (!b) continue;
+    const name = b.role === "naia" ? "나이아" : "실라";
+    const need = b.ai.sila ? b.ai.sila.sealHits : (sila && sila.ai.sila ? sila.ai.sila.sealHits : 4);
+    if (b.sealed) {
+      ctx.fillStyle = "#8fd3ff";
+      ctx.fillText(`${name} 봉인됨`, canvas.width - 12, y);
+    } else {
+      ctx.fillStyle = "#c77dff";
+      ctx.fillText(`${name} 봉인 ${b.sealHits || 0}/${need}`, canvas.width - 12, y);
+    }
+    y += 22;
+  }
+  ctx.restore();
 }

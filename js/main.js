@@ -746,8 +746,14 @@ const StageScene = {
       return;
     }
     // 승리: 기본 조건 = 살아있는 적이 하나도 없을 때(적이 있던 스테이지에 한해).
-    if (!this.won && enemies.length > 0 && enemies.every((e) => !e.alive)) {
-      this.buildWin();
+    //   스테이지3만 예외 — 실라/나이아(불사 저격수)와 화살 잡몹이 enemies에 남아 전멸
+    //   판정이 절대 성립하지 않으므로, '이프리트+가비아 둘 다 사망'으로 클리어를 판정한다.
+    if (!this.won && enemies.length > 0) {
+      const cleared =
+        this.currentStage === "스테이지 3"
+          ? !enemies.some((e) => (e.role === "ifrit" || e.role === "gabia") && e.alive)
+          : enemies.every((e) => !e.alive);
+      if (cleared) this.buildWin();
     }
     if (this.won) {
       handleMenuInput(this);

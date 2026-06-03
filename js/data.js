@@ -254,8 +254,30 @@ const ENEMY_AI = {
       collapseThresholds: [64, 48, 32, 16],
     },
   },
-  // 실라: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음). 4단계에서 구현.
-  sila: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 실라(왼쪽 위 모서리 저격수, 화면 밖). 추격·근접 없이(stationary) 제자리에서
+  // 포물선 화살을 쏜다(projectiles.js updateSila). floating이라 중력·충돌 면제.
+  //   화살: arrowCdMin~Max초 랜덤 쿨마다 1발. 시작점은 맵 상단 밖(x 랜덤·y<0), 발사각은
+  //     +y축(아래) 0° 기준 ±arrowSpreadDeg° 랜덤이고, 매 프레임 arrowGravity로 vy가 늘어
+  //     포물선을 그린다(전역 GRAVITY와 분리 — 튜닝용). 데미지 arrowDamage, 패링 가능.
+  //   패링 반사: 속도 arrowSpeed×reflectSpeedMult(2배)로 '살아있는 저격수 모서리'를 향해
+  //     호밍한다 — 나이아 생존(!naia.sealed) 시 오른쪽 위 나이아, 나이아 봉인 후엔 왼쪽 위
+  //     실라. 반사 화살이 그 모서리 보스 hurtbox에 닿으면 sealHits++ — 각 보스 sealHits회
+  //     누적 시 봉인(나이아 4 → 발사·파도 중지, 실라 4[누적 8] → 화살 발사 중지).
+  //   화살 바닥 착탄: 미패링 화살이 층 표면(stage.floorSurfaces)에 닿으면 층별 mobFloorChance
+  //     확률로 소멸 + 잡몹 생성(role "silaMob", HP mobHp). 잡몹은 플레이어와 가로 mobNearX px
+  //     이내 근접 시 mobExplodeSize×mobExplodeSize 폭발(dmg mobExplodeDamage, 패링 불가).
+  //     폭발 전에 플레이어가 때리면(평타 2 > mobHp) 그냥 소멸한다(폭발 안 함).
+  sila: {
+    chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true,
+    sila: {
+      arrowCdMin: 5, arrowCdMax: 8, arrowSpeed: 340, arrowGravity: 700, arrowSpreadDeg: 65,
+      arrowDamage: 1, reflectSpeedMult: 2, sealHits: 4,
+      mobFloorChance: 0.25, mobHp: 0.5, mobNearX: 20, mobExplodeSize: 100, mobExplodeDamage: 1,
+    },
+  },
+  // 실라 화살 잡몹(런타임 생성): 정지형 — 추격·공격 안 하고 제자리에서 근접 폭발만 한다
+  // (폭발 로직은 projectiles.js updateSilaMobs). 평타 한 대(2 > HP 0.5)에 죽는다.
+  silaMob: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
   // 나이아(오른쪽 위 모서리 저격수, 화면 밖). 추격·근접 없이(stationary) 제자리에서
   // 물줄기 레이저와 파도를 쏜다(projectiles.js updateNaia). floating이라 중력·충돌 면제.
   //   레이저: 한 번 발동에 laserVolley발을 laserVolleyGap초 간격으로 발사한다. 앞의

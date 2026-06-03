@@ -60,6 +60,10 @@ const GABIA_BLAST_TIME = 0.25; // 자기중심 폭발 판정/연출 지속(초).
 // 선분 길이는 맵을 충분히 가로지르게 길게 둔다(화면 밖 모서리에서 반대편까지).
 const NAIA_LASER_LEN = 3000; // 레이저 선분 길이(px). 맵 대각선(~1615)보다 충분히 큼
 
+// 실라 화살(arrow) 박스. 수치 규칙은 데이터(ai.sila)에서, 박스/연출만 여기 상수로 둔다.
+const ARROW_W = 30; // 화살 박스(진행 방향이 +x인 길쭉한 화살)
+const ARROW_H = 8;
+
 // ---- 상태 ----
 let projectiles = []; // 살아있는 투사체
 let pendingDaggers = []; // 시차 발사 대기열: { delay, shooter }
@@ -924,6 +928,144 @@ function updateNaiaWave(dt) {
   }
 }
 
+// ---- 실라(포물선 화살 / 반사 봉인 / 바닥 착탄 잡몹) ----
+// 실라는 왼쪽 위 모서리에 떠 있는(floating) 정지형 저격수다. 나이아처럼 매 프레임
+// enemies에서 실라를 찾아 쿨을 굴려 화살을 쏜다. sealed면 발사 중지.
+function updateSila(dt) {
+  const sila = enemies.find((e) => e.alive && e.role === "sila");
+  if (!sila) return;
+  if (sila.sealed) return; // 봉인: 화살 발사 중지(반사 4회 누적으로 봉인됨)
+  const cfg = sila.ai.sila;
+  if (sila.silaCd == null) sila.silaCd = randRange(cfg.arrowCdMin, cfg.arrowCdMax); // 첫 발사까지 랜덤 대기
+  sila.silaCd -= dt;
+  if (sila.silaCd <= 0) {
+    fireSilaArrow(sila);
+    sila.silaCd = randRange(cfg.arrowCdMin, cfg.arrowCdMax);
+  }
+}
+
+// 화살 한 발: 맵 상단 밖(x 랜덤·y<0)에서 발사각 +y축(아래) 0°±arrowSpreadDeg° 랜덤으로
+// 쏜다. 초기 속도는 arrowSpeed, 이후 매 프레임 arrowGravity로 vy가 늘어 포물선이 된다.
+function fireSilaArrow(sila) {
+  const cfg = sila.ai.sila;
+  const ox = Math.random() * stage.widthPx; // 맵 가로 어디서나
+  const oy = -ARROW_H; // 맵 상단 밖(y<0)
+  const spread = (cfg.arrowSpreadDeg * Math.PI) / 180;
+  const theta = (Math.random() * 2 - 1) * spread; // 아래(0°) 기준 ±spread
+  const vx = Math.sin(theta) * cfg.arrowSpeed; // 좌우 성분
+  const vy = Math.cos(theta) * cfg.arrowSpeed; // 아래(+y) 성분(항상 양수 → 아래로 시작)
+  const p = makeProjectile(ox, oy, vx, vy, {
+    w: ARROW_W, h: ARROW_H, kind: "arrow", damage: cfg.arrowDamage, parryable: true,
+  });
+  p.state = "incoming"; // incoming(낙하) → (패링)reflected(모서리 호밍)
+  p.cfg = cfg; // 착탄 잡몹/반사 수치 참조용
+  p.gravity = cfg.arrowGravity;
+  p.reflectSpeed = cfg.arrowSpeed * cfg.reflectSpeedMult;
+  p.prevCy = projCenterY(p); // 층 표면 통과 판정용(직전 프레임 중심 y)
+  projectiles.push(p);
+}
+
+// 화살 패링: 반사 상태로 전환(속도 2배·무피해). 반사 방향(모서리 보스 호밍)은 매 프레임
+// updateArrow가 잡으므로 여기선 상태만 바꾼다.
+function parrySilaArrow(p) {
+  parryFlash = 0.15;
+  TimeControl.freeze(PARRY_HIT_STOP);
+  p.parryLock = PROJ_PARRY_LOCK;
+  p.state = "reflected";
+  p.parryable = false;
+  p.damage = 0; // 반사 중엔 플레이어를 때리지 않는다
+}
+
+// 반사 화살이 노릴 모서리 보스 = 살아있는 저격수: 나이아 생존(!sealed) 시 나이아,
+// 나이아 봉인 후엔 실라. 둘 다 floating으로 화면 밖 모서리에 있다.
+function silaReflectTarget() {
+  const naia = enemies.find((e) => e.alive && e.role === "naia");
+  if (naia && !naia.sealed) return naia;
+  return enemies.find((e) => e.alive && e.role === "sila");
+}
+
+function updateArrow(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  if (p.state === "incoming") {
+    // 예고 없이 떨어지지만 패링 가능: 플레이어 공격 히트박스와 겹치면 반사 성사.
+    if (p.parryable && p.parryLock <= 0) {
+      const atkHb = getAttackHitbox();
+      if (atkHb && aabbOverlap(atkHb, p)) { parrySilaArrow(p); return; }
+    }
+    p.vy += p.gravity * dt; // 화살 전용 중력 → 포물선(전역 GRAVITY와 분리)
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.angle = Math.atan2(p.vy, p.vx);
+    if (!player.dead && aabbOverlap(p, getHurtbox(player))) {
+      damagePlayer(p.damage);
+      p.alive = false;
+      return;
+    }
+    // 바닥(층 표면) 착탄: 직전~현재 중심 y 사이를 지난 각 층 표면마다 mobFloorChance로
+    // 잡몹 생성(맞으면 화살 소멸). cy는 vy>0이라 단조 증가 → 각 표면을 한 번만 지난다.
+    const cy = projCenterY(p);
+    for (const fy of stage.floorSurfaces) {
+      if (p.prevCy < fy && fy <= cy && Math.random() < p.cfg.mobFloorChance) {
+        spawnSilaMob(projCenterX(p), fy, p.cfg);
+        p.alive = false;
+        return;
+      }
+    }
+    p.prevCy = cy;
+    if (projOutOfBounds(p)) p.alive = false;
+  } else { // reflected: 모서리 보스로 호밍(무피해). 도달 시 그 보스 sealHits++ → 봉인.
+    const target = silaReflectTarget();
+    if (!target) { // 이론상 없을 때: 그냥 직진하다 소멸
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (projOutOfBounds(p)) p.alive = false;
+      return;
+    }
+    const v = aimVel(projCenterX(p), projCenterY(p), projCenterX(target), projCenterY(target), p.reflectSpeed);
+    p.vx = v.vx;
+    p.vy = v.vy;
+    p.angle = Math.atan2(v.vy, v.vx);
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (aabbOverlap(p, getHurtbox(target))) {
+      target.sealHits = (target.sealHits || 0) + 1;
+      if (target.sealHits >= p.cfg.sealHits) target.sealed = true; // 봉인(나이아 4 / 실라 4)
+      TimeControl.freeze(ATTACK_HIT_STOP);
+      parryFlash = 0.1;
+      p.alive = false;
+    }
+  }
+}
+
+// 화살 착탄 잡몹: 표면(footY) 위에 세운다(role "silaMob", HP mobHp). 평타 한 대에 죽고
+// (combat.js hitEnemy), 플레이어가 가로로 근접하면 폭발한다(updateSilaMobs). 폭발 수치는
+// 잡몹에 저장해 둔다(생성원 cfg와 분리 — 잡몹만으로 자기완결).
+function spawnSilaMob(cx, surfaceY, cfg) {
+  const mob = makeEnemy(cx, surfaceY, "silaMob", cfg.mobHp);
+  mob.silaMob = true;
+  mob.mobNearX = cfg.mobNearX;
+  mob.mobExplodeSize = cfg.mobExplodeSize;
+  mob.mobExplodeDamage = cfg.mobExplodeDamage;
+  enemies.push(mob); // 다음 프레임 updateEnemies가 반영(루프 중 추가라 이번 프레임은 건너뜀)
+}
+
+// 잡몹 근접 폭발: 플레이어와 가로 mobNearX px 이내면 자기중심 mobExplodeSize 정사각형으로
+// 폭발(패링 불가)한 뒤 소멸한다. 폭발 박스는 가비아와 같은 generic blast(gabiaBlasts)로
+// 넣어 판정/렌더를 재활용한다. 플레이어가 먼저 때려 죽인 잡몹(!alive)은 폭발하지 않는다.
+function updateSilaMobs(dt) {
+  for (const m of enemies) {
+    if (!m.alive || m.role !== "silaMob") continue;
+    const pcx = player.x + player.w / 2;
+    const mcx = m.x + m.w / 2;
+    if (Math.abs(pcx - mcx) <= m.mobNearX) {
+      const cy = m.y + m.h / 2;
+      const s = m.mobExplodeSize;
+      gabiaBlasts.push({ x: mcx - s / 2, y: cy - s / 2, w: s, h: s, t: 0, damage: m.mobExplodeDamage, hitPlayer: false, alive: true });
+      m.alive = false;
+    }
+  }
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
   updateRangedEnemies(dt);
@@ -940,12 +1082,15 @@ function updateProjectiles(dt) {
   processNaiaLaserQueue(dt); // 레이저 볼리 시차 발사(마지막 발=플레이어 조준)
   updateNaiaLasers(dt); // 진행 중 레이저(예고→발사·점선분 판정·보스 피해/회복)
   updateNaiaWave(dt); // 진행 중 파도(주의표시→진행·다단히트·쿨 리셋)
+  updateSila(dt); // 실라 화살 발사 결정(쿨)
+  updateSilaMobs(dt); // 화살 착탄 잡몹 근접 폭발
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
     else if (p.kind === "dayaShot") updateDayaShot(p, dt);
     else if (p.kind === "rainDrop") updateRainDrop(p, dt);
     else if (p.kind === "stone") updateStone(p, dt);
+    else if (p.kind === "arrow") updateArrow(p, dt);
     else updateSimpleProjectile(p, dt);
   }
   projectiles = projectiles.filter((p) => p.alive);
@@ -957,6 +1102,7 @@ function renderProjectiles() {
     if (!p.alive) continue;
     if (p.kind === "rainDrop") { renderRainDrop(p); continue; } // 비는 세로 물방울로
     if (p.kind === "stone") { renderStone(p); continue; } // 가비아 돌
+    if (p.kind === "arrow") { renderArrow(p); continue; } // 실라 화살
     let color = "#c2ccd6"; // 강철빛(작은 단검 / 큰 단검 비행)
     if (p.kind === "big") {
       if (p.state === "stopped") color = "#ff7b00"; // 멈춤: 주황 경고(곧 폭발)
@@ -1034,6 +1180,30 @@ function renderNaiaWaveWarning() {
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText("← 파도!", 16, canvas.height / 2);
+  ctx.restore();
+}
+
+// 실라 화살: 진행 방향(angle)으로 회전한 길쭉한 화살(촉+깃). 반사(reflected) 상태면
+// 금빛으로 — 모서리 보스로 호밍 중이라는 신호.
+function renderArrow(p) {
+  const x = projCenterX(p) - camera.x;
+  const y = projCenterY(p) - camera.y;
+  const reflected = p.state === "reflected";
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(p.angle);
+  ctx.fillStyle = reflected ? "#ffd166" : "#b9c4cf"; // 반사=금빛, 일반=강철빛 샤프트
+  ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); // 샤프트(진행 방향이 +x)
+  ctx.fillStyle = reflected ? "#fff1c1" : "#eef3f7"; // 촉(앞끝) 밝게
+  const tip = Math.max(4, p.w * 0.25);
+  ctx.beginPath();
+  ctx.moveTo(p.w / 2, -p.h);
+  ctx.lineTo(p.w / 2 + tip, 0);
+  ctx.lineTo(p.w / 2, p.h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = reflected ? "#e0a93f" : "#7d8893"; // 깃(뒤끝)
+  ctx.fillRect(-p.w / 2, -p.h, Math.max(3, p.w * 0.18), p.h * 2);
   ctx.restore();
 }
 
