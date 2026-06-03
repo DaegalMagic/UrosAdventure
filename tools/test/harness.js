@@ -67,6 +67,11 @@ globalThis.__api = {
   get lines(){return lines}, set lines(v){lines=v},
   get dayaSpikes(){return dayaSpikes}, set dayaSpikes(v){dayaSpikes=v},
   get dayaRainQueue(){return dayaRainQueue}, set dayaRainQueue(v){dayaRainQueue=v},
+  get firePillars(){return firePillars}, set firePillars(v){firePillars=v},
+  get gabiaBlasts(){return gabiaBlasts}, set gabiaBlasts(v){gabiaBlasts=v},
+  get naiaLasers(){return naiaLasers}, set naiaLasers(v){naiaLasers=v},
+  get naiaLaserQueue(){return naiaLaserQueue}, set naiaLaserQueue(v){naiaLaserQueue=v},
+  get naiaWave(){return naiaWave}, set naiaWave(v){naiaWave=v},
   eval: (src) => eval(src),
 };`;
 
