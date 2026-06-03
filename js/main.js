@@ -220,6 +220,10 @@ function makeEnemy(footX, footY, role = null, hp = BOSS_HP_SOLO, defense = 0, si
     selfDrain: 0, // >0이면 초당 이 값만큼 스스로 체력이 깎인다(무적 폭주)
     permaGroggy: false, // 영구 그로기: 타이머 없이 계속 무방비(공격 안 함)
     floating: false, // 화면 밖 모서리 저격수(스테이지3 실라/나이아): 중력·충돌 면제
+    // ---- 스테이지4 아공간(림/셰이디) 상태 ----
+    inSubspace: false, // 아공간 피신 중인가(화면에서 사라짐 — 피격/공격/물리 정지)
+    subspaceTime: 0, // 아공간 체류 경과(초). 복귀 회복량(강제복귀 시 비례)에 쓰임
+    hpAtEntry: 0, // 아공간 진입 시 HP(복귀 회복의 기준선)
     anim: makeAnimator(), // 스프라이트 애니메이션 재생 상태(에셋 없으면 폴백)
   };
 }

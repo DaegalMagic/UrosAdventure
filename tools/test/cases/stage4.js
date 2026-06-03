@@ -467,3 +467,121 @@ suite("스테이지4 · 셰이디", (t) => {
     expect(g.player.hp).toBe(hp0 - 2);
   });
 });
+
+// ── 프롬프트3: 아공간 2인 연동 ──────────────────────────────────────────────
+// data.js SUBSPACE(enterThreshold 0.05·returnHp 0.3·dwellTime 4) + rim/shady ai.subspace +
+//   combat.js hitEnemy(maybeEnterSubspace) + enemy.js updateSubspace/returnFromSubspace.
+// 스펙 [[stage4-rim-shady-spec]] "공통 — 아공간". 둘 다 생존 중일 때만 작동(즉사 불가),
+// 첫 처치 이후 생존자는 봉인(정상 처치). 첫 처치는 그로기→포식(devour)으로 성립한다.
+suite("스테이지4 · 아공간", (t) => {
+  // 설정: 림·셰이디 둘 다 같은 SUBSPACE(5%↓→아공간, 30% 복귀, 4초 체류)를 공유한다.
+  t.test("설정: 림/셰이디 subspace = enterThreshold 0.05·returnHp 0.3·dwellTime 4", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rs = g.bossOf("rim").ai.subspace;
+    const ss = g.bossOf("shady").ai.subspace;
+    expect(rs.enterThreshold).toBe(0.05);
+    expect(rs.returnHp).toBe(0.3);
+    expect(rs.dwellTime).toBe(4);
+    expect(ss).toBe(rs); // 둘이 같은 공통 설정 객체 참조
+  });
+
+  // 진입: 둘 다 생존 중 HP가 5% 이하로 떨어지면 죽지 않고 아공간으로 피신(alive 유지).
+  t.test("진입: 둘 다 생존 중 5%↓ → 아공간 피신(사망 안 함)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    rim.hp = 6; // 6 > 5(5%)
+    g.hitEnemy(rim, 2); // hp → 4 ≤ 5
+    expect(rim.inSubspace).toBe(true);
+    expect(rim.alive).toBeTruthy();
+    expect(rim.hpAtEntry).toBe(4); // 복귀 회복 기준선 저장
+  });
+
+  // 즉사 불가: 둘 다 생존 중이면 큰 피해로 HP가 0 이하가 돼도 죽지 않고 아공간으로 간다.
+  t.test("즉사 불가: 둘 다 생존 중엔 과피해도 사망 대신 아공간", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    rim.hp = 4;
+    g.hitEnemy(rim, 100); // hp → -96
+    expect(rim.alive).toBeTruthy();
+    expect(rim.inSubspace).toBe(true);
+    expect(rim.hpAtEntry).toBe(0); // 음수 클램프(0)
+  });
+
+  // 정상 복귀: dwellTime(4초) 경과 시 아공간에서 나와 returnHp(30% = 30)로 회복.
+  t.test("정상 복귀: 4초 체류 후 HP 30%로 회복하며 복귀", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    rim.inSubspace = true; rim.subspaceTime = 0; rim.hpAtEntry = 4; rim.hp = 4;
+    g.updateSubspace(rim, 4); // 4 ≥ dwellTime → 정상 복귀
+    expect(rim.inSubspace).toBeFalsy();
+    expect(rim.hp).toBeCloseTo(30); // maxHp 100 × 0.3
+    expect(rim.state).toBe("chase");
+  });
+
+  // 강제 복귀: 아공간 체류 중 상대가 죽으면 즉시 복귀 + 체류시간 비례 회복(park-and-kill 방지).
+  t.test("강제 복귀: 상대 사망 시 즉시 복귀 + 체류시간 비례 회복", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    const shady = g.bossOf("shady");
+    rim.inSubspace = true; rim.subspaceTime = 2; rim.hpAtEntry = 4; rim.hp = 4; // 절반 체류
+    shady.alive = false; // 상대 사망
+    g.updateSubspace(rim, 0.016);
+    expect(rim.inSubspace).toBeFalsy();
+    // frac = 2/4 = 0.5 → hp = 4 + 0.5×(30−4) = 17 (정상 복귀 30보다 적음)
+    expect(rim.hp).toBeCloseTo(17);
+  });
+
+  // 피격 불가: 아공간 피신 중엔 플레이어 평타가 안 맞는다(resolveAttackHits 스킵).
+  //   같은 세팅에서 피신을 풀면 맞는 걸로 대조(스킵이 실제로 작동함을 확인).
+  t.test("피격 불가: 아공간 중 무피해 → 복귀 후엔 피격(대조)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    g.player.x = rim.x; g.player.y = rim.y; g.player.facing = 1;
+    g.player.attack = g.eval("ATTACKS.playerSlash");
+    g.player.attackElapsed = 0; g.player.attackDir = 1; // windup 0 → 즉시 active
+    rim.inSubspace = true;
+    const hp0 = rim.hp;
+    g.resolveAttackHits();
+    expect(rim.hp).toBe(hp0); // 피신 중: 무피해
+    rim.inSubspace = false;
+    g.player.attackHits.clear();
+    g.resolveAttackHits();
+    expect(rim.hp).toBeLessThan(hp0); // 복귀 후: 피격
+  });
+
+  // 봉인: 상대가 이미 죽었으면 5%↓로 깎아도 아공간 없이 정상 처치된다(둘 다 생존 중만 작동).
+  t.test("봉인: 상대 사망 후엔 5%↓로 아공간 없이 정상 처치", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    g.bossOf("shady").alive = false; // 상대 먼저 사망 → 림 봉인
+    rim.hp = 4;
+    g.hitEnemy(rim, 5); // hp → -1
+    expect(rim.inSubspace).toBeFalsy(); // 아공간 안 들어감
+    expect(rim.alive).toBeFalsy(); // 정상 처치
+  });
+
+  // 클리어 루트(통합): 그로기→포식으로 첫 처치 성립 → 생존자 봉인 → HP로 마무리 → 둘 다 사망.
+  t.test("클리어: 포식 첫 처치 → 생존자 봉인 → HP 마무리 → 전멸 성립", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const rim = g.bossOf("rim");
+    const shady = g.bossOf("shady");
+    // 셰이디 그로기 상태에서 포식(첫 처치) — 둘 다 생존 중이라도 포식은 HP 무관 즉시 마무리.
+    shady.groggyTime = 1;
+    g.hitEnemy(shady, 0.01, true); // isDevour=true + 그로기 → devourEnemy
+    expect(shady.alive).toBeFalsy(); // 첫 처치
+    // 생존자(림)는 봉인 → 5%↓로 깎으면 아공간 없이 사망.
+    rim.hp = 3;
+    g.hitEnemy(rim, 5);
+    expect(rim.inSubspace).toBeFalsy();
+    expect(rim.alive).toBeFalsy();
+    expect(g.enemies.every((e) => !e.alive)).toBeTruthy(); // 클리어 성립
+  });
+});

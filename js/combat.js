@@ -14,7 +14,7 @@ function resolveAttackHits() {
   const amount = spec && spec.damage != null ? spec.damage : PLAYER_ATTACK_DAMAGE;
   const isDevour = !!(spec && spec.devour);
   for (const enemy of enemies) {
-    if (!enemy.alive) continue;
+    if (!enemy.alive || enemy.inSubspace) continue; // 아공간 피신 중이면 피격 불가(사라짐)
     if (player.attackHits.has(enemy)) continue;
     if (aabbOverlap(hb, getHurtbox(enemy))) {
       player.attackHits.add(enemy);
@@ -79,6 +79,9 @@ function hitEnemy(enemy, amount = PLAYER_ATTACK_DAMAGE, isDevour = false) {
   enemy.hp -= dmg;
   if (enemy.gShieldTime > 0) enemy.gShieldHit = true; // 방어막 중 피격 → 해제 시 폭발
   TimeControl.freeze(ATTACK_HIT_STOP); // 적중 타격감(시간 정지)
+  // 스테이지4 아공간(림/셰이디): HP가 5% 이하로 떨어지면 죽지 않고 아공간으로 피신한다
+  // (둘 다 생존 중일 때만 — 상대가 죽었으면 봉인되어 아래 사망 처리로 빠진다).
+  if (maybeEnterSubspace(enemy)) return;
   // 평타/일반 공격으로 HP가 0이 되면 그냥 사망한다(포식은 위 전용 입력으로만 일어난다).
   if (enemy.hp <= 0) enemy.alive = false;
 }

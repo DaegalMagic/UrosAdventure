@@ -72,6 +72,7 @@ function renderHittables() {
 function renderEnemies() {
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
+    if (enemy.inSubspace) continue; // 아공간 피신 중: 화면에서 사라짐(그리지 않음)
     const edx = enemy.x - camera.x;
     const edy = enemy.y - camera.y;
 

@@ -193,6 +193,12 @@ const VERT_MOVE_CHANCE = 0.7; // 시도 시 실제로 점프/드롭할 확률(�
 //     cooldown: 스페셜 재사용 대기(초).
 //   floorPref: 원거리(비근접) 시 선호하는 층 오프셋. 층 인덱스는 0=위라서
 //     -1=플레이어보다 한 층 위(루포), 0=같은 층(티그), +1=한 층 아래(베니).
+// 아공간(스테이지4 공통, 림/셰이디): HP가 enterThreshold(5%) 이하로 떨어지면 죽지 않고
+// 아공간으로 피신했다가 dwellTime초 뒤 returnHp(30%)로 회복해 복귀한다. 상대가 살아 있을
+// 때만 작동(둘 다 생존 = 즉사 불가). 한쪽이 처치되면 생존자는 봉인되어 정상 처치된다.
+// 상대가 아공간 체류 중 죽으면 즉시 복귀하되 회복은 체류시간에 비례(park-and-kill 방지).
+// 메커니즘 SSOT: 메모리 stage4-rim-shady-spec.md "공통 — 아공간".
+const SUBSPACE = { enterThreshold: 0.05, returnHp: 0.3, dwellTime: 4 };
 const ENEMY_AI = {
   default: { chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "enemySwing", special: null, floorPref: 0 },
   benny: { chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "bennySlash", special: { kind: "rangeReplace", attack: "bennyStruggle", cooldown: 6 }, floorPref: 1 },
@@ -347,6 +353,7 @@ const ENEMY_AI = {
   rim: {
     chaseSpeed: 160, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "rimSwing", special: null, floorPref: 0,
     rim: { cooldown: 7, telegraph: 1.2, slamActive: 0.3, slamDamage: 1, slamStun: 2 },
+    subspace: SUBSPACE, // 5%↓ → 아공간 피신(둘 다 생존 중일 때만). enemy.js updateSubspace
   },
   // 셰이디(도주/순간이동형): 일반 CHASE를 쓰지 않고 enemy.js updateShady가 전담한다
   // (추격이 아니라 '도주' — stationary 아님). 플레이어 반대로 fleeSpeed로 달아나며
@@ -372,6 +379,7 @@ const ENEMY_AI = {
       gateDamage: 1, gateParryCancel: 3, groggyTime: 3,
       weaponWScale: 5, weaponHScale: 7, weaponDamage: 2,
     },
+    subspace: SUBSPACE, // 5%↓ → 아공간 피신(둘 다 생존 중일 때만). enemy.js updateSubspace
   },
 };
 function aiFor(role) {

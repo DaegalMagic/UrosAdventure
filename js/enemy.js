@@ -94,6 +94,11 @@ function updateEnemies(dt) {
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
 
+    // 아공간(스테이지4 림/셰이디): 피신 중이면 화면에서 사라진 채 복귀 타이머만 돌린다
+    // (이동/공격/세로 물리 정지). dwellTime 경과 시 30% 회복 복귀, 상대 사망 시 즉시
+    // 강제 복귀(체류시간 비례 회복) — 둘 다 updateSubspace가 처리한다.
+    if (enemy.inSubspace) { updateSubspace(enemy, dt); continue; }
+
     // 무적 폭주(베니+루포 둘 다 포식당한 티그): 스스로 체력이 깎인다. 0이 되면
     // 사망한다 — 마지막 1인이라 더 전파할 연동은 없다.
     if (enemy.selfDrain > 0) {
@@ -252,6 +257,7 @@ function updateEnemies(dt) {
   // 넘겨 'x축은 이동 없이' 두고(벽 충돌은 4층 맵에서 추가) y축만 처리한다.
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
+    if (enemy.inSubspace) continue; // 아공간 피신 중: 좌표 고정(물리 정지)
     // 화면 밖 모서리 저격수(스테이지3 실라/나이아): 고정 위치로 떠 있어 중력·충돌을
     // 받지 않는다(화면 밖에서 투사체만 쏘는 보스). 좌표를 둔 채 물리 패스를 건너뛴다.
     if (enemy.floating) continue;
@@ -686,4 +692,58 @@ function shadyCancelBarrage(enemy, cfg) {
   enemy.attack = null;
   enemy.parried = false;
   enemy.hitPlayer = false;
+}
+
+// ---- 아공간(스테이지4 공통 — 림/셰이디 2인 연동) ----
+// 두 보스가 모두 살아 있는 동안엔 HP를 5% 이하로 깎아도 죽지 않고 아공간으로
+// 피신했다가 회복해 복귀한다 → 즉사 불가. 한쪽이 처치되면 생존자는 봉인되어 정상
+// 처치된다. 공략 루트 = 한쪽을 아공간에 보낸 뒤 상대를 처치(또는 첫 처치를 성립).
+// SSOT: 메모리 stage4-rim-shady-spec.md "공통 — 아공간". 설정 = data.js SUBSPACE.
+
+// 아공간 진입 시도(combat.js hitEnemy에서 피해 적용 직후 호출). 진입했으면 true를
+// 반환해 hitEnemy의 사망 처리를 건너뛴다(HP가 0 이하라도 죽지 않고 피신). 조건:
+//   ① 아공간 보스(ai.subspace)이고 아직 피신 중이 아니다.
+//   ② 상대(같은 group의 다른 아공간 보스)가 살아 있다 — 봉인 규칙(둘 다 생존 중만).
+//   ③ HP가 enterThreshold(5%) 이하로 떨어졌다.
+function maybeEnterSubspace(enemy) {
+  const cfg = enemy.ai && enemy.ai.subspace;
+  if (!cfg || enemy.inSubspace) return false;
+  const partnerAlive =
+    enemy.group && enemy.group.some((e) => e !== enemy && e.ai.subspace && e.alive);
+  if (!partnerAlive) return false; // 상대 사망 → 봉인(아공간 불가, 정상 처치)
+  if (enemy.hp > enemy.maxHp * cfg.enterThreshold) return false; // 아직 5% 초과
+  // 피신: 화면에서 사라지고(피격/공격/물리 정지) 진행 중 패턴을 취소한다.
+  enemy.inSubspace = true;
+  enemy.subspaceTime = 0;
+  enemy.hpAtEntry = Math.max(enemy.hp, 0); // 복귀 회복의 기준선(음수 방지)
+  enemy.hp = enemy.hpAtEntry;
+  enemy.state = "chase";
+  enemy.attack = null;
+  enemy.shadyBarrage = null; // 셰이디 차원문 난사 중단
+  enemy.rimPhase = "idle";   // 림 내려찍기 진행 중단
+  return true;
+}
+
+// 아공간 체류 갱신(updateEnemies가 inSubspace인 적에 매 프레임 호출). 상대가 죽으면
+// 즉시 강제 복귀(체류시간 비례 회복 — park-and-kill 방지), 아니면 dwellTime 경과 시
+// 정상 복귀(returnHp=30%로 회복)한다.
+function updateSubspace(enemy, dt) {
+  const cfg = enemy.ai.subspace;
+  const partnerAlive = enemy.group.some((e) => e !== enemy && e.ai.subspace && e.alive);
+  if (!partnerAlive) { returnFromSubspace(enemy, true); return; } // 상대 사망 → 즉시 복귀
+  enemy.subspaceTime += dt;
+  if (enemy.subspaceTime >= cfg.dwellTime) returnFromSubspace(enemy, false); // 정상 복귀
+}
+
+// 아공간 복귀: HP를 회복하고 다시 전장에 나타난다(추격 재개). forced(상대 사망 강제
+// 복귀)면 회복량이 체류시간에 비례하고(frac<1), 정상 복귀면 returnHp(30%)까지 채운다.
+// 회복선 = hpAtEntry → target 사이를 frac만큼 보간(진입 HP보다 항상 같거나 높음).
+function returnFromSubspace(enemy, forced) {
+  const cfg = enemy.ai.subspace;
+  const target = enemy.maxHp * cfg.returnHp;
+  const frac = forced ? Math.min(enemy.subspaceTime / cfg.dwellTime, 1) : 1;
+  enemy.hp = enemy.hpAtEntry + frac * (target - enemy.hpAtEntry);
+  enemy.inSubspace = false;
+  enemy.subspaceTime = 0;
+  enemy.state = "chase";
 }
