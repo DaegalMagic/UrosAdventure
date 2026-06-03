@@ -182,6 +182,11 @@ function updateEnemies(dt) {
     // false면 평타·추격이 필요한 상태라 아래 일반 CHASE 로직을 그대로 탄다.
     if (enemy.role === "ifrit" && updateIfritPatterns(enemy, dt)) continue;
 
+    // 가비아: 카이팅(거리 유지)·돌 던지기·동적 붕괴를 전담한다(일반 CHASE 미사용).
+    // 이동(x)은 updateGabia가 직접 옮기고, 세로는 updateVerticalChase로 플레이어 층을
+    // 대략 따라간다. 물리 패스(중력/충돌)는 아래에서 그대로 적용된다.
+    if (enemy.role === "gabia") { updateGabia(enemy, dt); continue; }
+
     // CHASE: 행동 우선순위 — ① gap-closer 스페셜(거리 무관, 쿨+조건) →
     //        ② 사거리 안이면 공격(평타 또는 rangeReplace 스페셜) → ③ 추격 이동.
     const sp = enemy.ai.special;
@@ -413,4 +418,48 @@ function ifritFirePillar(enemy, cfg) {
   const footY = player.y + player.h;
   spawnFirePillar(enemy, player.x + player.w / 2, floorSurfaceY(floorOf(footY)));
   enemy.ifritPatternCd = cfg.cooldown;
+}
+
+// ---- 가비아(스테이지3 1보스) — 카이팅 / 돌 던지기 / 동적 붕괴 ----
+// 추격형(이프리트)과 달리 거리를 '유지'한다: 플레이어가 너무 가까우면 물러나고, 너무
+// 멀면 좁힌다(그 사이는 가로 정지). 세로는 updateVerticalChase로 플레이어 층을 대략
+// 따라가 돌 조준이 같은 높이에서 의미 있게 한다. x 이동은 직접 옮기고(물리 패스가
+// vx=0으로 두므로), 중력/충돌은 물리 패스가 처리한다(슬램과 같은 방식).
+//   공유 방어막/무적 시전은 projectiles.js updateGabiaShared가 별도 주기로 돌린다.
+function updateGabia(enemy, dt) {
+  const cfg = enemy.ai.gabia;
+
+  // 동적 붕괴: HP가 임계(64/48/32/16)에 도달할 때마다 1회씩 맵을 무너뜨린다(누적).
+  // 그로기/사망과 무관하게 HP만 보고 처리한다(HP는 이 함수 밖에서만 변하므로 안전).
+  if (enemy.collapseStep == null) enemy.collapseStep = 0;
+  const thr = cfg.collapseThresholds;
+  while (enemy.collapseStep < thr.length && enemy.hp <= thr[enemy.collapseStep]) {
+    collapseStage3Floors();
+    enemy.collapseStep++;
+  }
+
+  // 그로기 중엔 이동·투척 정지(그로기 자체는 위 공통 처리에서 continue로 못 옴 —
+  // 여기 도달했다는 건 비그로기. 방어적으로 한 번 더 가드).
+  if (enemy.permaGroggy || enemy.groggyTime > 0) return;
+
+  // 카이팅 이동(가로): kiteNear 안이면 물러나고, kiteFar 밖이면 좁힌다, 그 사이는 정지.
+  const ecx = enemy.x + enemy.w / 2;
+  const pcx = player.x + player.w / 2;
+  const dx = Math.abs(pcx - ecx);
+  let moveDir = 0;
+  if (dx < cfg.kiteNear) moveDir = ecx < pcx ? -1 : 1; // 물러남(플레이어 반대 방향)
+  else if (dx > cfg.kiteFar) moveDir = pcx < ecx ? -1 : 1; // 접근(거리 좁힘)
+  enemy.x += moveDir * cfg.moveSpeed * dt;
+  enemy.x = Math.max(0, Math.min(enemy.x, stage.widthPx - enemy.w));
+
+  // 세로: 플레이어 층을 대략 따라간다(floorPref 0 → 근접 시 플레이어 층, 평소도 같은 층).
+  updateVerticalChase(enemy, dt);
+
+  // 돌 던지기: 2~4초 랜덤 쿨마다 발사 순간 플레이어를 조준(projectiles.js).
+  if (enemy.stoneCd == null) enemy.stoneCd = randRange(cfg.stoneCdMin, cfg.stoneCdMax);
+  enemy.stoneCd -= dt;
+  if (enemy.stoneCd <= 0) {
+    fireGabiaStone(enemy);
+    enemy.stoneCd = randRange(cfg.stoneCdMin, cfg.stoneCdMax);
+  }
 }

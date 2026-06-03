@@ -48,6 +48,12 @@ const SPIKE_H = 40; // 다 솟았을 때 표면 위로 솟는 높이
 const FIRE_PILLAR_W = PLAYER_W; // 캐릭터 폭(=45)
 const FIRE_PILLAR_H = PLAYER_H * 2; // 캐릭터 2배 높이(=120)
 
+// 가비아 돌(stone) 박스 + 공유 방어막 폭발 지속. 수치 규칙은 데이터(ai.gabia)에서,
+// 박스/연출 길이만 여기 상수로 둔다.
+const STONE_W = 20; // 돌 박스
+const STONE_H = 18;
+const GABIA_BLAST_TIME = 0.25; // 자기중심 폭발 판정/연출 지속(초). 짧게 한 번 친다
+
 // ---- 상태 ----
 let projectiles = []; // 살아있는 투사체
 let pendingDaggers = []; // 시차 발사 대기열: { delay, shooter }
@@ -55,6 +61,7 @@ let lines = []; // 키디언 직선 공격: { axis, pos, state, t, shooter, hitP
 let dayaSpikes = []; // 다야 P2 가시: { x, surfaceY, state, t, shooter, hitPlayer, alive }
 let dayaRainQueue = []; // 다야 P3 낙하 대기열: { delay, x, shooter }
 let firePillars = []; // 이프리트 불기둥: { x, surfaceY, state, t, shooter, hitPlayer, alive }
+let gabiaBlasts = []; // 가비아 공유 방어막 폭발: { x, y, w, h, t, damage, hitPlayer, alive }
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -64,6 +71,7 @@ function resetProjectiles() {
   dayaSpikes = [];
   dayaRainQueue = [];
   firePillars = [];
+  gabiaBlasts = [];
 }
 
 // from→to 단위벡터 × speed.
@@ -518,6 +526,163 @@ function updateFirePillars(dt) {
   firePillars = firePillars.filter((p) => p.alive);
 }
 
+// ---- 가비아 돌(stone) ----
+// 발사 순간 플레이어를 조준한 돌 한 발(패링 가능). 패링하면 '각도 반사' — 다야 P1이
+// player.facing로 '수평' 반사(vy=0)인 것과 달리, 돌은 player.facing 방향의 수직 거울에
+// 부딪힌 듯 '수평 성분만 반전'하고 수직 성분(입사각)은 유지한다. 반사된 돌은 플레이어를
+// 때리지 않고(damage 0) 이프리트/가비아에게만 reflectDamage로 작용한다.
+function fireGabiaStone(shooter) {
+  const cfg = shooter.ai.gabia;
+  const sx = projCenterX(shooter);
+  const sy = projCenterY(shooter);
+  const { vx, vy } = aimVel(sx, sy, projCenterX(player), projCenterY(player), cfg.stoneSpeed);
+  const p = makeProjectile(sx, sy, vx, vy, {
+    w: STONE_W, h: STONE_H, kind: "stone", damage: cfg.stoneDamage, parryable: true,
+  });
+  p.state = "incoming"; // incoming(플레이어 조준) → (패링)reflected(각도 반사)
+  p.reflectDamage = cfg.stoneDamage; // 반사체가 보스를 맞힐 때 피해
+  projectiles.push(p);
+}
+
+// 돌 패링: 각도 반사(수평 성분만 반전 — 수직 거울에 튕긴 듯, 입사각 유지).
+function parryGabiaStone(p) {
+  parryFlash = 0.15;
+  TimeControl.freeze(PARRY_HIT_STOP);
+  p.parryLock = PROJ_PARRY_LOCK;
+  p.state = "reflected";
+  p.parryable = false;
+  p.damage = 0; // 반사 중엔 플레이어를 때리지 않는다
+  p.vx = -p.vx; // 수평 성분 반전(수직 거울 = player.facing 면), vy(입사각)는 유지
+  p.angle = Math.atan2(p.vy, p.vx);
+}
+
+function updateStone(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  if (p.state === "incoming") {
+    // 예고 없이 날아오지만 패링 가능: 플레이어 공격 히트박스와 겹치면 반사 성사.
+    if (p.parryable && p.parryLock <= 0) {
+      const atkHb = getAttackHitbox();
+      if (atkHb && aabbOverlap(atkHb, p)) { parryGabiaStone(p); return; }
+    }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.angle = Math.atan2(p.vy, p.vx);
+    if (projOutOfBounds(p)) { p.alive = false; return; }
+    if (!player.dead && aabbOverlap(p, getHurtbox(player))) {
+      damagePlayer(p.damage);
+      p.alive = false;
+    }
+  } else { // reflected: 각도 반사로 날아가며 이프리트/가비아에게만 작용(플레이어 무피해)
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (projOutOfBounds(p)) { p.alive = false; return; }
+    for (const e of enemies) {
+      if (!e.alive || e.floating) continue; // 화면 밖 저격수(실라/나이아) 제외
+      if (e.role !== "ifrit" && e.role !== "gabia") continue; // 보스만 피해 대상
+      if (!aabbOverlap(p, getHurtbox(e))) continue;
+      hitEnemy(e, p.reflectDamage);
+      p.alive = false;
+      break;
+    }
+  }
+}
+
+// ---- 가비아 공유 방어막 / 무적 / 폭발 ----
+// 가비아가 shieldCycle(10초)마다 시전한다. 매 3번째 시전은 방어막 대신 무적이다.
+//   방어막: 이프리트+가비아 동시에 시간제(shieldDuration초) 방어력 버프(+shieldDefenseBuff).
+//     HP를 흡수하는 비비 방어막(shieldCharges)과 달리 '시간'으로만 풀리고, 그 사이 피해는
+//     방어력 합산으로 줄어든다(combat.js hitEnemy). 방어막 유지 중 피격된(gShieldHit) 쪽은
+//     해제 explodeDelay초 뒤 자기중심 폭발(spawnGabiaBlast).
+//   무적(3번째): 둘 중 HP 적은 쪽 하나만 invincDuration초. 때리면 플레이어가 invincStagger초
+//     경직되고 무적은 즉시 해제된다(combat.js hitEnemy의 gInvinc 분기).
+// 매 프레임 호출(updateProjectiles). 가비아 사망 후에도 잔여 타이머(방어막/폭발/무적)는
+// 끝까지 처리하되, 새 시전은 가비아가 살아있고 그로기 아닐 때만 한다.
+function updateGabiaShared(dt) {
+  // 1) 모든 보스의 방어막/무적/폭발 타이머 진행(가비아 생사와 무관).
+  for (const e of enemies) {
+    if (e.gShieldTime > 0) {
+      e.gShieldTime -= dt;
+      if (e.gShieldTime <= 0) {
+        e.gShieldTime = 0;
+        // 방어막 유지 중 피격됐다면 해제 후 폭발 예약(자기중심).
+        if (e.gShieldHit) { e.gExplodeTimer = e.gExplodeDelay; e.gShieldHit = false; }
+      }
+    }
+    if (e.gInvincTime > 0) {
+      e.gInvincTime -= dt;
+      if (e.gInvincTime <= 0) { e.gInvincTime = 0; e.gInvinc = false; }
+    }
+    if (e.gExplodeTimer > 0) {
+      e.gExplodeTimer -= dt;
+      if (e.gExplodeTimer <= 0) { e.gExplodeTimer = 0; spawnGabiaBlast(e); }
+    }
+  }
+  // 2) 가비아 시전 주기(살아있고 그로기 아님).
+  const gabia = enemies.find((e) => e.alive && e.role === "gabia");
+  if (!gabia || gabia.permaGroggy || gabia.groggyTime > 0) return;
+  const cfg = gabia.ai.gabia;
+  if (gabia.gShieldCd == null) gabia.gShieldCd = cfg.shieldCycle; // 첫 시전까지 풀쿨 대기
+  gabia.gShieldCd -= dt;
+  if (gabia.gShieldCd <= 0) {
+    gabia.gShieldCd = cfg.shieldCycle;
+    gabia.gCastCount = (gabia.gCastCount || 0) + 1;
+    if (gabia.gCastCount % 3 === 0) castGabiaInvinc(cfg);
+    else castGabiaShield(cfg);
+  }
+}
+
+// 보호 대상 = 살아있는 이프리트/가비아(공유 방어막은 group의 이프리트도 함께 보호).
+function gabiaProtectees() {
+  return enemies.filter((e) => e.alive && (e.role === "ifrit" || e.role === "gabia"));
+}
+
+// 공유 방어막 시전: 이프리트+가비아 동시에 시간제 방어막 + 방어력 버프를 건다.
+// 폭발 수치는 각자에 저장해 둔다(가비아가 죽어도 폭발이 제 수치로 터지도록).
+function castGabiaShield(cfg) {
+  for (const e of gabiaProtectees()) {
+    e.gShieldTime = cfg.shieldDuration;
+    e.gShieldBuff = cfg.shieldDefenseBuff;
+    e.gShieldHit = false;
+    e.gExplodeDelay = cfg.explodeDelay;
+    e.gExplodeScale = cfg.explodeScale;
+    e.gExplodeDamage = cfg.explodeDamage;
+  }
+}
+
+// 무적 시전(매 3번째): 둘 중 HP 적은 쪽 하나만. 경직 길이도 저장(hitEnemy가 읽는다).
+function castGabiaInvinc(cfg) {
+  const ps = gabiaProtectees();
+  if (ps.length === 0) return;
+  let target = ps[0];
+  for (const e of ps) if (e.hp < target.hp) target = e;
+  target.gInvinc = true;
+  target.gInvincTime = cfg.invincDuration;
+  target.gStagger = cfg.invincStagger;
+}
+
+// 자기중심 폭발: 캐릭터 중심에서 가로·세로 gExplodeScale배 범위. dmg gExplodeDamage,
+// 패링 불가(회피 전용). updateGabiaBlasts가 한 번만 판정한다.
+function spawnGabiaBlast(e) {
+  const cx = e.x + e.w / 2;
+  const cy = e.y + e.h / 2;
+  const w = e.w * e.gExplodeScale;
+  const h = e.h * e.gExplodeScale;
+  gabiaBlasts.push({ x: cx - w / 2, y: cy - h / 2, w, h, t: 0, damage: e.gExplodeDamage, hitPlayer: false, alive: true });
+}
+
+function updateGabiaBlasts(dt) {
+  for (const b of gabiaBlasts) {
+    if (!b.alive) continue;
+    b.t += dt;
+    if (!player.dead && !b.hitPlayer && aabbOverlap(b, getHurtbox(player))) {
+      damagePlayer(b.damage); // 패링 불가(회피 전용)
+      b.hitPlayer = true;
+    }
+    if (b.t >= GABIA_BLAST_TIME) b.alive = false;
+  }
+  gabiaBlasts = gabiaBlasts.filter((b) => b.alive);
+}
+
 // P3 비: 맵 가로를 rainSlot으로 나눈 칸 중 랜덤으로 rainCount개를, rainInterval초마다
 // 1~2개씩 떨어뜨리도록 대기열에 예약한다(각자 화면 위에서 등속 낙하·패링 시 소멸).
 function scheduleDayaRain(e) {
@@ -581,11 +746,14 @@ function updateProjectiles(dt) {
   processDayaRain(dt);
   updateDayaSpikes(dt);
   updateFirePillars(dt);
+  updateGabiaShared(dt); // 가비아 공유 방어막/무적/폭발 주기(이프리트도 함께 보호)
+  updateGabiaBlasts(dt);
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
     else if (p.kind === "dayaShot") updateDayaShot(p, dt);
     else if (p.kind === "rainDrop") updateRainDrop(p, dt);
+    else if (p.kind === "stone") updateStone(p, dt);
     else updateSimpleProjectile(p, dt);
   }
   projectiles = projectiles.filter((p) => p.alive);
@@ -596,6 +764,7 @@ function renderProjectiles() {
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "rainDrop") { renderRainDrop(p); continue; } // 비는 세로 물방울로
+    if (p.kind === "stone") { renderStone(p); continue; } // 가비아 돌
     let color = "#c2ccd6"; // 강철빛(작은 단검 / 큰 단검 비행)
     if (p.kind === "big") {
       if (p.state === "stopped") color = "#ff7b00"; // 멈춤: 주황 경고(곧 폭발)
@@ -616,6 +785,40 @@ function renderProjectiles() {
   renderLines(); // 키디언 직선 공격(예고/발사) — 단검 위에 그린다
   renderDayaSpikes(); // 다야 P2 가시(예고/솟음)
   renderFirePillars(); // 이프리트 불기둥(예고/즉발)
+  renderGabiaBlasts(); // 가비아 공유 방어막 폭발(자기중심)
+}
+
+// 가비아 돌: 진행 방향으로 회전한 돌덩이(반사 상태면 금빛). 아래쪽에 그림자 톤.
+function renderStone(p) {
+  const x = projCenterX(p) - camera.x;
+  const y = projCenterY(p) - camera.y;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(p.angle);
+  ctx.fillStyle = p.state === "reflected" ? "#ffd166" : "#9b8266"; // 반사=금빛, 일반=돌빛
+  ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.25)"; // 아래 그늘
+  ctx.fillRect(-p.w / 2, p.h / 2 - 4, p.w, 4);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.2)"; // 위 하이라이트
+  ctx.fillRect(-p.w / 2, -p.h / 2, p.w, 3);
+  ctx.restore();
+}
+
+// 가비아 공유 방어막 폭발: 자기중심에서 퍼지는 주황 링 + 옅은 채움(짧게 페이드아웃).
+function renderGabiaBlasts() {
+  for (const b of gabiaBlasts) {
+    if (!b.alive) continue;
+    const prog = Math.min(1, b.t / GABIA_BLAST_TIME);
+    const cx = b.x + b.w / 2 - camera.x;
+    const cy = b.y + b.h / 2 - camera.y;
+    const w = b.w * (0.5 + 0.5 * prog); // 0.5배→1배로 퍼짐
+    const h = b.h * (0.5 + 0.5 * prog);
+    ctx.fillStyle = `rgba(255, 120, 30, ${0.35 * (1 - prog)})`;
+    ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+    ctx.strokeStyle = `rgba(255, 160, 50, ${1 - prog})`;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+  }
 }
 
 // 이프리트 불기둥: telegraph는 표면에 주황 경고 띠 + 솟을 높이를 알리는 옅은 기둥 윤곽

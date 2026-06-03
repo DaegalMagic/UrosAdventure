@@ -232,7 +232,28 @@ const ENEMY_AI = {
       pillarTelegraph: 1.5, pillarActive: 0.3, pillarDamage: 1,
     },
   },
-  gabia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 가비아(1번 보스, 카이팅 슈터): 추격 대신 거리 유지(카이팅) — enemy.js updateGabia가
+  // 전담한다(일반 CHASE 미사용, stationary 아님). 플레이어가 kiteNear 안으로 오면 물러나고,
+  // kiteFar 밖이면 거리를 좁힌다(그 사이는 가로 정지). moveSpeed로 가로 이동하고 세로는
+  // 플레이어 층을 대략 따라간다(updateVerticalChase 재활용). stoneCdMin~Max초마다 돌을
+  // 던지고(projectiles.js fireGabiaStone — 패링 시 '각도 반사'), shieldCycle초마다 공유
+  // 방어막/무적을 시전한다(projectiles.js updateGabiaShared). collapseThresholds HP에 도달할
+  // 때마다 맵이 단계적으로 무너진다(map.js collapseStage3Floors).
+  //   공유 방어막: 이프리트+가비아 동시에 시간제(shieldDuration초) 방어력 버프(+shieldDefenseBuff).
+  //     방어막 유지 중 피격된 쪽은 해제 explodeDelay초 뒤 자기중심 폭발(가로·세로 explodeScale배,
+  //     dmg explodeDamage, 패링 불가). 매 3번째 시전은 방어막 대신 무적(HP 적은 쪽 하나,
+  //     invincDuration초; 때리면 플레이어 invincStagger초 경직 + 무적 즉시 해제).
+  gabia: {
+    chaseSpeed: 90, attackRangeX: 0, basic: null, special: null, floorPref: 0,
+    gabia: {
+      kiteNear: 250, kiteFar: 400, moveSpeed: 90,
+      stoneCdMin: 2, stoneCdMax: 4, stoneSpeed: 300, stoneDamage: 1,
+      shieldCycle: 10, shieldDuration: 2, shieldDefenseBuff: 0.8,
+      explodeDelay: 0.5, explodeScale: 1.4, explodeDamage: 1,
+      invincDuration: 1.5, invincStagger: 0.5,
+      collapseThresholds: [64, 48, 32, 16],
+    },
+  },
   // 실라/나이아: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음).
   sila: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
   naia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },

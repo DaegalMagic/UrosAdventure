@@ -45,6 +45,16 @@ function resolveAttackHits() {
 // 1로 클램프해 배수가 음수(=피해가 회복으로 뒤집힘)가 되는 일을 막는다.
 function hitEnemy(enemy, amount = PLAYER_ATTACK_DAMAGE, isDevour = false) {
   if (enemy.invincible) return; // 무적: 피해 무시(타격감 연출도 생략)
+  // 가비아 3번째 시전 무적(gInvinc): 때리면 무적이 즉시 해제되고 공격자(플레이어)가
+  // gStagger초 경직된다(피해는 0). projectiles.js castGabiaInvinc가 걸어 둔다.
+  if (enemy.gInvinc) {
+    enemy.gInvinc = false;
+    enemy.gInvincTime = 0;
+    player.staggerTime = enemy.gStagger || 0.5;
+    TimeControl.freeze(ATTACK_HIT_STOP);
+    parryFlash = 0.1;
+    return;
+  }
   // 방어막(#5): 충전이 남아 있으면 이번 공격을 흡수한다(HP 무피해). blocks회를 다
   // 까야 본체에 피해가 들어간다. 흡수에도 타격감(히트스톱) + 막힘 플래시는 준다.
   if (enemy.shieldCharges > 0) {
@@ -61,9 +71,13 @@ function hitEnemy(enemy, amount = PLAYER_ATTACK_DAMAGE, isDevour = false) {
     TimeControl.freeze(ATTACK_HIT_STOP);
     return;
   }
-  const defMult = 1 - Math.min(enemy.defense, 1);
+  // 가비아 공유 방어막(시간제): 유지 중이면 방어력 버프(gShieldBuff)를 합산해 피해를
+  // 줄이고, 피격됐다는 표시(gShieldHit)를 남긴다 — 방어막 해제 후 자기중심 폭발 예약용.
+  const shieldDef = enemy.gShieldTime > 0 ? (enemy.gShieldBuff || 0) : 0;
+  const defMult = 1 - Math.min(enemy.defense + shieldDef, 1);
   const dmg = amount * (groggy ? GROGGY_DAMAGE_MULT : 1) * defMult;
   enemy.hp -= dmg;
+  if (enemy.gShieldTime > 0) enemy.gShieldHit = true; // 방어막 중 피격 → 해제 시 폭발
   TimeControl.freeze(ATTACK_HIT_STOP); // 적중 타격감(시간 정지)
   // 평타/일반 공격으로 HP가 0이 되면 그냥 사망한다(포식은 위 전용 입력으로만 일어난다).
   if (enemy.hp <= 0) enemy.alive = false;

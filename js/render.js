@@ -137,6 +137,43 @@ function renderEnemies() {
       ctx.fillText(`방어막 ${enemy.shieldCharges}`, edx + enemy.w / 2, edy - 20);
     }
 
+    // 가비아 공유 방어막(시간제): 금빛 테두리 + 남은 시간(비비의 청록 흡수막과 구분).
+    // 이프리트도 가비아 시전 시 함께 보호되므로 둘 다에 뜬다.
+    if (enemy.gShieldTime > 0) {
+      ctx.strokeStyle = "rgba(255, 200, 90, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(edx - 5, edy - 5, enemy.w + 10, enemy.h + 10);
+      ctx.fillStyle = "rgba(255, 200, 90, 0.12)";
+      ctx.fillRect(edx - 5, edy - 5, enemy.w + 10, enemy.h + 10);
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(`방어막 ${enemy.gShieldTime.toFixed(1)}s`, edx + enemy.w / 2, edy - 20);
+    }
+    // 가비아 무적(3번째 시전): 흰 이중 테두리 + "무적" — 때리면 플레이어가 경직된다.
+    if (enemy.gInvinc) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(edx - 6, edy - 6, enemy.w + 12, enemy.h + 12);
+      ctx.strokeStyle = "rgba(180, 220, 255, 0.8)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(edx - 9, edy - 9, enemy.w + 18, enemy.h + 18);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("무적", edx + enemy.w / 2, edy - 20);
+    }
+    // 이프리트/가비아 HP 표시(머리 위) — 가비아 HP 연동 동적 붕괴 임계를 눈으로 읽게.
+    if (enemy.role === "ifrit" || enemy.role === "gabia") {
+      ctx.fillStyle = "#e6edf3";
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(`HP ${Math.max(0, enemy.hp).toFixed(0)}`, edx + enemy.w / 2, edy - 4);
+    }
+
     // 공격 예고(windup) 텔레그래프: active 직전, 곧 뜰 히트박스를 흐리게 보여준다
     // (플레이어가 패링 타이밍을 읽도록). 힘겨루기 유발 공격은 붉게 강조한다.
     //   단 gap-closer(돌진/블링크)는 제자리 range 박스가 실제 타격(이동 경로/등 뒤

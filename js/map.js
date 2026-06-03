@@ -184,6 +184,69 @@ function makeStage3() {
   return grid.map((row) => row.join(""));
 }
 
+// ---- 가비아 HP 연동 동적 붕괴(스테이지3 전용) ----
+// 가비아 HP가 임계에 도달할 때마다(enemy.js updateGabia가 호출) 발판층(2~4층)의 가로
+// 칸을 무작위로 무너뜨린다(stage.tiles 칸 제거, 누적). 1층(바닥)은 절대 건드리지 않는다
+// — '바닥에서 최상층까지 경로'의 출발점이라 항상 디딜 면이 있어야 한다(불변 ①).
+// 불변 보장(20% 조건보다 우선): 한 층에서 '인접한 남은 발판 사이 빈칸'이 MAX_GAP를
+// 넘지 않게 한다 → 어느 층이든 좌우로 점프해 건널 수 있고(최상층 좌우 이동 보장 = 불변
+// ②), 바닥에서 한 층씩(140px, 점프 한 번 거리) 디뎌 최상층까지 오를 수 있다(불변 ①).
+//   한 칸 시험 제거 → 이 빈칸 규칙을 깨면 되돌린다(그 칸은 보존). 그래서 실제 제거량이
+//   20%에 못 미칠 수 있다 — 의도된 동작(불변이 비율보다 우선).
+const COLLAPSE_MAX_GAP = 6; // 한 층에서 허용하는 최대 연속 빈칸(타일). 6*20=120px ≤ 점프거리
+const COLLAPSE_FRACTION = 0.2; // 한 번에 무너뜨리려는 비율(가로 기준)
+
+function collapseStage3Floors() {
+  if (typeof stage === "undefined" || !stage || !stage.floorSurfaces) return;
+  // 발판층 행 = 표면 y / 타일크기. 마지막(바닥, 1층)은 제외(절대 안 무너뜨림).
+  const surfaceRows = stage.floorSurfaces.map((y) => Math.round(y / TILE_SIZE));
+  const floorRows = surfaceRows.slice(0, -1); // 2~4층(원웨이 발판)
+  const cols = stage.cols;
+  const target = Math.floor(cols * COLLAPSE_FRACTION); // 이번에 무너뜨리려는 칸 수
+  for (const r of floorRows) collapseStage3Row(r, cols, target);
+}
+
+// 한 층(행 r)에서 target칸을 무작위로 무너뜨리되, 빈칸 규칙(연속 ≤ MAX_GAP, 최소 1칸
+// 잔존)을 깨는 칸은 보존한다. 후보를 섞어 한 번씩 시험 제거한다.
+function collapseStage3Row(r, cols, target) {
+  const candidates = [];
+  for (let c = 0; c < cols; c++) if (stage.tiles[r][c].solid) candidates.push(c);
+  shuffleInPlace(candidates);
+  let removed = 0;
+  for (const c of candidates) {
+    if (removed >= target) break;
+    const before = stage.tiles[r][c];
+    stage.tiles[r][c] = TILES["."]; // 시험 제거
+    if (stage3RowViolatesGap(r, cols)) {
+      stage.tiles[r][c] = before; // 불변 위반 → 되돌림(보존)
+    } else {
+      removed++;
+    }
+  }
+}
+
+// 한 층(행 r)에서 남은 발판들 사이(및 양 끝 벽 사이)의 연속 빈칸이 MAX_GAP를 넘는
+// 구간이 있는가. 양 끝(맵 가장자리)도 동일 기준으로 본다(전 구간 좌우 이동 보장).
+// 발판이 하나도 없으면 위반(그 층에 디딜 곳이 사라지면 안 됨).
+function stage3RowViolatesGap(r, cols) {
+  let run = 0;
+  let any = false;
+  for (let c = 0; c < cols; c++) {
+    if (stage.tiles[r][c].solid) { any = true; run = 0; }
+    else { run++; if (run > COLLAPSE_MAX_GAP) return true; }
+  }
+  return !any;
+}
+
+// Fisher-Yates 제자리 셔플(무작위 붕괴 순서).
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 // 2~7번 더미 맵(스테이지 2·3만 실제 맵). 너비를 조금씩 달리해 시각적으로 구분되게 한다.
 STAGES["스테이지 2"] = makeDayaStage();
 STAGES["스테이지 3"] = makeStage3();

@@ -147,6 +147,7 @@ function makePlayer(stage) {
     attackHits: new Set(), // 이번 공격(히트박스 1회)에서 이미 맞춘 적들(중복 타격 방지)
     hp: PLAYER_MAX_HP, // 남은 체력. 0이면 사망
     vulnTime: 0, // >0이면 받는 피해 2배 디버프 중(비비 #2). 남은 시간(초)
+    staggerTime: 0, // >0이면 경직 중(조작 불가). 가비아 무적 대상을 때리면 걸린다
     dead: false, // true면 사망 상태(조작 불가 + 초록색 렌더)
     anim: makeAnimator(), // 스프라이트 애니메이션 재생 상태(에셋 없으면 폴백)
   };
@@ -276,10 +277,10 @@ function startStage(name) {
     // 떨군 단검은 이제 비비가 패링당할 때 생성한다(onParry, dropsDaggerOnParry).
     // 초기에는 비워 둔다(hittables는 위에서 이미 []).
   } else if (name === "스테이지 3") {
-    // 스테이지3(실라/나이아/이프리트/가비아, 보상=불칼). 0단계는 4보스를 배치만
-    // 하고 행동은 없다(전부 정지형 더미; AI는 stage3-impl-plan 1~4단계에서 붙인다).
+    // 스테이지3(실라/나이아/이프리트/가비아, 보상=불칼). 이프리트(1단계)·가비아(2단계)는
+    // 실제 AI가 붙었고, 실라·나이아는 아직 정지형 더미(3·4단계에서 붙인다).
     // 클리어 조건 = 이프리트 + 가비아 HP 0. 실라·나이아는 봉인만 될 뿐 죽지 않는다.
-    //   - 이프리트/가비아: HP 80(BOSS_HP_TRIO). 1층 바닥(발 y=500) 오른쪽에 나란히.
+    //   - 이프리트(추격형)/가비아(카이팅형): HP 80(BOSS_HP_TRIO). 1층 바닥(발 y=500) 오른쪽에 나란히.
     //   - 실라/나이아: 화면 밖 위 모서리 저격수(왼쪽/오른쪽). floating으로 떠 있어
     //     중력·충돌을 받지 않고, HP가 없어(defense=1로 평타 무효) 봉인으로만 무력화된다.
     const ifrit = makeEnemy(900, 500, "ifrit", BOSS_HP_TRIO);
@@ -451,10 +452,15 @@ function update(dt) {
 
   // 받는 피해 2배 디버프(비비 #2) 타이머 감소.
   if (player.vulnTime > 0) player.vulnTime = Math.max(0, player.vulnTime - dt);
+  // 경직(가비아 무적 대상 가격) 타이머 감소.
+  if (player.staggerTime > 0) player.staggerTime = Math.max(0, player.staggerTime - dt);
 
   // 포식 윈드업(0.3초) 동안 행동 불가: 이동·대시·점프·드롭스루·새 공격 입력을 막는다.
+  // 가비아 무적을 때려 경직 중일 때도 똑같이 모든 입력을 막는다(경직).
   // (공격 파이프라인 진행과 중력·충돌 물리는 계속 — 아래에서 입력만 게이트한다.)
-  const actionLocked = player.attack === ATTACKS.devour && player.attackElapsed < ATTACKS.devour.windup;
+  const actionLocked =
+    (player.attack === ATTACKS.devour && player.attackElapsed < ATTACKS.devour.windup) ||
+    player.staggerTime > 0;
 
   // --- 좌우 이동 ---
   let dir = 0;
@@ -485,7 +491,7 @@ function update(dt) {
   // 새로 누르면(엣지) 바라보는 방향으로 공격을 시작한다. 공격은 windup→active→
   // recovery로 전개되고(active 구간에만 히트박스가 뜸), 재발동은 공격이 완전히
   // 끝난 뒤에만. 방향은 발동 시점의 facing으로 고정한다.
-  if (Input.justPressed("attack") && !player.attack) {
+  if (!actionLocked && Input.justPressed("attack") && !player.attack) {
     player.attack = ATTACKS.playerSlash;
     player.attackElapsed = 0;
     player.attackDir = player.facing;
@@ -494,7 +500,7 @@ function update(dt) {
   // 포식(S): 평타와 같은 공격 파이프라인을 쓰되 devour 스펙(넓은 범위·0.3초 예고·
   // 그로기 적 즉시 포식)을 단다. (S는 이후 '선택된 보물스킬 사용'도 겸한다 — 보물
   // 시스템이 붙으면 여기서 보물스킬 발동과 분기한다.)
-  if (Input.justPressed("treasureUse") && !player.attack) {
+  if (!actionLocked && Input.justPressed("treasureUse") && !player.attack) {
     player.attack = ATTACKS.devour;
     player.attackElapsed = 0;
     player.attackDir = player.facing;
