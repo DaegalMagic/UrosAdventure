@@ -12,8 +12,12 @@ const filter = process.argv[2] || "";
 const casesDir = path.join(__dirname, "test", "cases");
 
 // 케이스 파일 로드(이름순 — _load.js가 먼저). require 시점에 suite()가 REGISTRY를 채운다.
+// 파일 경계마다 REGISTRY 증가분에 출처 파일명을 태깅해, 필터가 suite명뿐 아니라
+// 파일명(예: "stage2")으로도 잡히게 한다(suite명은 한글 "스테이지2"라 영문 안 잡힘).
 for (const f of fs.readdirSync(casesDir).filter((f) => f.endsWith(".js")).sort()) {
+  const before = REGISTRY.length;
   require(path.join(casesDir, f));
+  for (let i = before; i < REGISTRY.length; i++) REGISTRY[i].file = f;
 }
 
 let pass = 0;
@@ -22,7 +26,7 @@ let todo = 0;
 const failures = [];
 
 for (const s of REGISTRY) {
-  if (filter && !s.name.includes(filter)) continue;
+  if (filter && !s.name.includes(filter) && !(s.file || "").includes(filter)) continue;
   console.log("\n■ " + s.name);
   for (const t of s.tests) {
     if (t.todo) {

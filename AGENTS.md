@@ -50,11 +50,18 @@ The local wiki follows this shape:
 ## Project Tooling
 
 - This is a build-tool-free static web game (HTML/CSS/vanilla JS rendered to a
-  `<canvas>`). There is no package manager, bundler, framework, or test harness.
-- To run/verify locally, open `index.html` directly in a browser, or serve the
+  `<canvas>`). There is no package manager, bundler, or framework.
+- A dependency-free logic test harness lives in `tools/test/` (vm sandbox loads
+  `js/*.js` in `index.html` order; named isolated cases per stage/system). Run
+  `node tools/test.js` (all) or `node tools/test.js stage2` (filter by file or
+  suite name). Non-zero exit on any failure (CI/pre-commit friendly). Add new
+  checks as `t.test` cases in `tools/test/cases/*.js`; see
+  `docs/test-refactor-plan.md` §6. (`tools/verify-split.js` is now a thin wrapper
+  that just runs `tools/test.js`, kept for old call sites.)
+- To run/verify visually, open `index.html` directly in a browser, or serve the
   folder statically (e.g. `python -m http.server 8000`) and load the page.
-- "Verification" here means loading the page and observing runtime behavior in
-  the browser, since there is no compile or automated-test step to invoke.
+- The harness covers logic only (no render pixels). Pixel/visual "verification"
+  still means loading the page and observing runtime behavior in the browser.
 - Deployment is GitHub Pages via `.github/workflows/deploy.yml` on push to
   `main`. Keep the repository root free of secrets and non-public files, because
   the whole root is uploaded as the Pages artifact.
