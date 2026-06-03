@@ -69,6 +69,7 @@ let dayaRainQueue = []; // 다야 P3 낙하 대기열: { delay, x, shooter }
 let firePillars = []; // 이프리트 불기둥: { x, surfaceY, state, t, shooter, hitPlayer, alive }
 let gabiaBlasts = []; // 가비아 공유 방어막 폭발: { x, y, w, h, t, damage, hitPlayer, alive }
 let naiaLasers = []; // 나이아 레이저: { ox, oy, ex, ey, state, t, shooter, hitPlayer, hitBosses[], alive }
+let naiaLaserQueue = []; // 시차 발사 대기열(볼리): { delay, shooter, aimPlayer }
 let naiaWave = null; // 나이아 파도(동시 1개): { shooter, phase("warn"|"active"), t, x, w, speed, ... } | null
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
@@ -81,6 +82,7 @@ function resetProjectiles() {
   firePillars = [];
   gabiaBlasts = [];
   naiaLasers = [];
+  naiaLaserQueue = [];
   naiaWave = null;
 }
 
@@ -778,17 +780,45 @@ function updateNaia(dt) {
     if (naia.naiaCount % cfg.waveEvery === 0) {
       spawnNaiaWave(naia); // 파도 차례 — 쿨은 파도가 사라진 뒤에 리셋(여기선 두지 않음)
     } else {
-      spawnNaiaLaser(naia);
+      scheduleNaiaLasers(naia); // 레이저 볼리(시차 3발) 예약
       naia.naiaCd = cfg.laserCd;
     }
   }
 }
 
-// 레이저 한 발 예약: 슈터 중심에서 완전 랜덤한 각도로 길게 뻗는 선분을 telegraph로 띄운다.
-function spawnNaiaLaser(naia) {
+// 레이저 볼리 예약: laserVolley발을 laserVolleyGap초 간격으로 발사한다. 마지막 한 발만
+// 발사 시점 플레이어를 정조준하고, 앞의 발들은 완전 랜덤 각도다(processNaiaLaserQueue).
+function scheduleNaiaLasers(naia) {
+  const cfg = naia.ai.naia;
+  for (let i = 0; i < cfg.laserVolley; i++) {
+    naiaLaserQueue.push({ delay: i * cfg.laserVolleyGap, shooter: naia, aimPlayer: i === cfg.laserVolley - 1 });
+  }
+}
+
+// 시차 대기열을 굴려 때가 된 레이저를 발사한다. 슈터가 봉인/사망하면 남은 발은 취소.
+function processNaiaLaserQueue(dt) {
+  const next = [];
+  for (const q of naiaLaserQueue) {
+    if (!q.shooter.alive || q.shooter.sealed) continue;
+    q.delay -= dt;
+    if (q.delay <= 0) spawnNaiaLaser(q.shooter, q.aimPlayer);
+    else next.push(q);
+  }
+  naiaLaserQueue = next;
+}
+
+// 레이저 한 발: aimPlayer면 발사 시점 플레이어 중심을 정조준, 아니면 완전 랜덤 각도로
+// 슈터 중심에서 길게 뻗는 선분을 telegraph로 띄운다.
+function spawnNaiaLaser(naia, aimPlayer) {
   const ox = projCenterX(naia);
   const oy = projCenterY(naia);
-  const angle = Math.random() * Math.PI * 2; // 발사각 완전 랜덤
+  let angle;
+  if (aimPlayer) {
+    const ph = getHurtbox(player);
+    angle = Math.atan2(ph.y + ph.h / 2 - oy, ph.x + ph.w / 2 - ox); // 플레이어 정조준
+  } else {
+    angle = Math.random() * Math.PI * 2; // 완전 랜덤
+  }
   naiaLasers.push({
     ox, oy, angle,
     ex: ox + Math.cos(angle) * NAIA_LASER_LEN,
@@ -895,6 +925,7 @@ function updateProjectiles(dt) {
   updateGabiaShared(dt); // 가비아 공유 방어막/무적/폭발 주기(이프리트도 함께 보호)
   updateGabiaBlasts(dt);
   updateNaia(dt); // 나이아 레이저/파도 발사 결정(쿨·파도 차례)
+  processNaiaLaserQueue(dt); // 레이저 볼리 시차 발사(마지막 발=플레이어 조준)
   updateNaiaLasers(dt); // 진행 중 레이저(예고→발사·점선분 판정·보스 피해/회복)
   updateNaiaWave(dt); // 진행 중 파도(주의표시→진행·다단히트·쿨 리셋)
   for (const p of projectiles) {
