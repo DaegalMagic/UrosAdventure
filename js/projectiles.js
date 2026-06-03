@@ -43,12 +43,18 @@ const RAIN_H = 20;
 const SPIKE_W = 44; // P2 가시 한 더미의 폭(판정/렌더 공용)
 const SPIKE_H = 40; // 다 솟았을 때 표면 위로 솟는 높이
 
+// 이프리트 불기둥(firePillar) 박스. 폭=캐릭터 폭, 높이=캐릭터 2배(스펙). 다야 가시와
+// 같은 telegraph→active 구조지만 '즉발'(예고 뒤 곧장 ON)이고 패링 불가(회피 전용)다.
+const FIRE_PILLAR_W = PLAYER_W; // 캐릭터 폭(=45)
+const FIRE_PILLAR_H = PLAYER_H * 2; // 캐릭터 2배 높이(=120)
+
 // ---- 상태 ----
 let projectiles = []; // 살아있는 투사체
 let pendingDaggers = []; // 시차 발사 대기열: { delay, shooter }
 let lines = []; // 키디언 직선 공격: { axis, pos, state, t, shooter, hitPlayer, alive }
 let dayaSpikes = []; // 다야 P2 가시: { x, surfaceY, state, t, shooter, hitPlayer, alive }
 let dayaRainQueue = []; // 다야 P3 낙하 대기열: { delay, x, shooter }
+let firePillars = []; // 이프리트 불기둥: { x, surfaceY, state, t, shooter, hitPlayer, alive }
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -57,6 +63,7 @@ function resetProjectiles() {
   lines = [];
   dayaSpikes = [];
   dayaRainQueue = [];
+  firePillars = [];
 }
 
 // from→to 단위벡터 × speed.
@@ -476,6 +483,41 @@ function updateDayaSpikes(dt) {
   dayaSpikes = dayaSpikes.filter((s) => s.alive);
 }
 
+// ---- 이프리트 불기둥(firePillar) ----
+// 다야 가시와 같은 telegraph→active 구조를 재활용하되, 예고 뒤 '즉발'(곧장 ON)이고
+// 패링 불가다. enemy.js의 ifritFirePillar가 플레이어 발밑(중심 x, 현재 층 표면 y)에
+// 깐다. 폭=캐릭터 폭, 높이=캐릭터 2배로 표면 위로 솟는 불기둥(active 동안 접촉 1회 피해).
+function spawnFirePillar(shooter, x, surfaceY) {
+  firePillars.push({ x, surfaceY, state: "telegraph", t: 0, shooter, hitPlayer: false, alive: true });
+}
+
+// 불기둥 한 기의 AABB(판정/렌더 공용). telegraph 중엔 높이 0(판정 없음), active 중엔
+// 표면 위로 FIRE_PILLAR_H만큼 선 기둥(즉발이라 솟는 연출 없이 바로 전체 높이).
+function firePillarBox(p) {
+  const h = p.state === "active" ? FIRE_PILLAR_H : 0;
+  return { x: p.x - FIRE_PILLAR_W / 2, y: p.surfaceY - h, w: FIRE_PILLAR_W, h };
+}
+
+function updateFirePillars(dt) {
+  for (const p of firePillars) {
+    if (!p.alive) continue;
+    if (!p.shooter.alive) { p.alive = false; continue; } // 이프리트 사망 시 진행 중 기둥도 소멸
+    const cfg = p.shooter.ai.ifrit;
+    p.t += dt;
+    if (p.state === "telegraph") {
+      if (p.t >= cfg.pillarTelegraph) { p.state = "active"; p.t = 0; p.hitPlayer = false; }
+    } else { // active: 즉발 불기둥 ON — 접촉 시 1회 피해(패링 불가, 회피 전용)
+      if (!player.dead && aabbOverlap(firePillarBox(p), getHurtbox(player))) {
+        if (!p.hitPlayer) { damagePlayer(cfg.pillarDamage); p.hitPlayer = true; }
+      } else {
+        p.hitPlayer = false;
+      }
+      if (p.t >= cfg.pillarActive) p.alive = false;
+    }
+  }
+  firePillars = firePillars.filter((p) => p.alive);
+}
+
 // P3 비: 맵 가로를 rainSlot으로 나눈 칸 중 랜덤으로 rainCount개를, rainInterval초마다
 // 1~2개씩 떨어뜨리도록 대기열에 예약한다(각자 화면 위에서 등속 낙하·패링 시 소멸).
 function scheduleDayaRain(e) {
@@ -538,6 +580,7 @@ function updateProjectiles(dt) {
   updateDayaPatterns(dt);
   processDayaRain(dt);
   updateDayaSpikes(dt);
+  updateFirePillars(dt);
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
@@ -572,6 +615,32 @@ function renderProjectiles() {
   }
   renderLines(); // 키디언 직선 공격(예고/발사) — 단검 위에 그린다
   renderDayaSpikes(); // 다야 P2 가시(예고/솟음)
+  renderFirePillars(); // 이프리트 불기둥(예고/즉발)
+}
+
+// 이프리트 불기둥: telegraph는 표면에 주황 경고 띠 + 솟을 높이를 알리는 옅은 기둥 윤곽
+// (점멸), active는 표면에서 솟은 불기둥(주황→노랑 그라데이션 느낌의 두 겹).
+function renderFirePillars() {
+  for (const p of firePillars) {
+    if (!p.alive) continue;
+    const cx = p.x - camera.x;
+    const sy = p.surfaceY - camera.y;
+    const half = FIRE_PILLAR_W / 2;
+    if (p.state === "telegraph") {
+      const cfg = p.shooter.ai.ifrit;
+      const prog = Math.min(1, p.t / cfg.pillarTelegraph); // 0→1 (다가올수록 진하게)
+      const blink = 0.35 + 0.4 * Math.abs(Math.sin(p.t * 10));
+      ctx.fillStyle = `rgba(255, 140, 0, ${blink})`;
+      ctx.fillRect(cx - half, sy - 4, FIRE_PILLAR_W, 4); // 표면 경고 띠
+      ctx.fillStyle = `rgba(255, 120, 0, ${0.12 + 0.18 * prog})`; // 솟을 영역 옅은 윤곽
+      ctx.fillRect(cx - half, sy - FIRE_PILLAR_H, FIRE_PILLAR_W, FIRE_PILLAR_H);
+    } else { // active: 즉발 불기둥
+      ctx.fillStyle = "#ff6a00"; // 바깥 불꽃(주황)
+      ctx.fillRect(cx - half, sy - FIRE_PILLAR_H, FIRE_PILLAR_W, FIRE_PILLAR_H);
+      ctx.fillStyle = "#ffd23f"; // 안쪽 심지(노랑)
+      ctx.fillRect(cx - half * 0.5, sy - FIRE_PILLAR_H, FIRE_PILLAR_W * 0.5, FIRE_PILLAR_H);
+    }
+  }
 }
 
 // 다야 P3 낙하 투사체: 회전 없이 세로로 길쭉한 하늘빛 물방울(꼬리 밝게).

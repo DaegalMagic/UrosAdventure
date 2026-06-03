@@ -207,11 +207,31 @@ const ENEMY_AI = {
   // 패링 불가가 되며(=봉인 불가) 빨갛게 바뀐다 — combat.js applyDevourRipple가 건다.
   kidian: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true, lineShooter: { cdMin: 5, cdMax: 7, damage: 2, telegraph: 1.0, fire: 0.15, parryCdBonus: 10, sealParries: 5, enrageCdMult: 3 } },
   // ---- 스테이지3(실라/나이아/이프리트/가비아) ----
-  // 0단계(맵+뼈대) 시점에는 넷 다 가만히 서 있는 정지형 placeholder다. 각자의 실제
-  // 행동(이프리트 점프슬램/불기둥, 가비아 카이팅·돌·방어막, 나이아 레이저/파도,
-  // 실라 화면밖 화살)은 이후 단계에서 이 역할들을 확장하며 붙인다(stage3-impl-plan).
-  // 이프리트는 추후 티그와 같은 추격(floorPref 0)으로 바뀌지만 지금은 stationary 더미.
-  ifrit: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 0단계(맵+뼈대) 시점엔 넷 다 정지형 placeholder였다. 1단계에서 이프리트만 실제
+  // 행동을 붙인다(가비아·실라·나이아는 아직 정지형 더미 — 이후 단계).
+  // 이프리트(1번 보스, 근접 핵심): 티그와 동일하게 추격(floorPref 0)한다. 일반 CHASE
+  // (chaseStep+세로추격+사거리 평타)는 그대로 쓰고, enemy.js의 updateIfritPatterns가
+  // 그 위에 '거리 분기'를 얹는다 — 플레이어와 중심 직선거리가 patternDist 이상이면
+  // 두 패턴(점프슬램/불기둥) 중 랜덤으로 하나를 cooldown초 쿨로 발동하고, 미만이면
+  // 일반 평타(enemySwing)를 낸다. 패턴 수치는 ifrit 하위 객체에 모은다.
+  //   slam(점프슬램): slamJumpSpeed로 플레이어 방향 포물선 점프(2단점프 높이≈312px).
+  //     공중 내내 패링 가능 — 패링 성공 시 변신 없이 뒤로 pushbackDist를 pushbackTime에
+  //     걸쳐 밀리고, 실패(착지)하면 거대 불꽃으로 변신한다(가로·세로 transformScale배,
+  //     transformTime초 무적, 겹치면 transformTickInterval초당 transformTickDmg).
+  //     변신 해제 직후부터 cooldown초 쿨이 시작된다.
+  //   pillar(불기둥): 발동 순간 플레이어 발밑에 위험표시(pillarTelegraph초) → 즉발.
+  //     폭=캐릭터폭·높이=캐릭터2배, 패링 불가(회피 전용), 데미지 pillarDamage.
+  ifrit: {
+    chaseSpeed: ENEMY_CHASE_SPEED, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "enemySwing", special: null, floorPref: 0,
+    ifrit: {
+      patternDist: 200, cooldown: 5,
+      slamJumpSpeed: 1060, // √(2·GRAVITY·312.5) — 2단점프 높이의 상승 속도
+      pushbackDist: 20, pushbackTime: 0.1,
+      transformScale: 3, transformTime: 3, transformTickDmg: 0.1, transformTickInterval: 0.1,
+      slamDamage: 1, // 미패링 몸통 접촉 피해(슬램 1회)
+      pillarTelegraph: 1.5, pillarActive: 0.3, pillarDamage: 1,
+    },
+  },
   gabia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
   // 실라/나이아: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음).
   sila: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },

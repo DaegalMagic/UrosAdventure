@@ -177,6 +177,11 @@ function updateEnemies(dt) {
     // 패턴 미정 — wiki open_question). facing/그로기 처리와 아래 세로 물리는 그대로 적용.
     if (enemy.ai.stationary) continue;
 
+    // 이프리트: 거리 분기(패턴/평타)를 일반 CHASE 위에 얹는다. 진행 중인 슬램/변신/
+    // 밀림이거나 이번에 패턴을 발동했으면 true → 일반 추격을 건너뛴다(전담 처리).
+    // false면 평타·추격이 필요한 상태라 아래 일반 CHASE 로직을 그대로 탄다.
+    if (enemy.role === "ifrit" && updateIfritPatterns(enemy, dt)) continue;
+
     // CHASE: 행동 우선순위 — ① gap-closer 스페셜(거리 무관, 쿨+조건) →
     //        ② 사거리 안이면 공격(평타 또는 rangeReplace 스페셜) → ③ 추격 이동.
     const sp = enemy.ai.special;
@@ -266,4 +271,146 @@ function blinkBehindPlayer(enemy) {
   // 적은 플레이어를 향한다(등 뒤에서 플레이어 쪽 = behindDir의 반대).
   enemy.facing = player.facing;
   enemy.attackDir = enemy.facing; // 이번 공격 방향도 갱신(텔레포트 후 재조준)
+}
+
+// ---- 이프리트(스테이지3 1보스) 패턴 ----
+// 거리 분기를 일반 CHASE 위에 얹는다. 반환 true면 이번 프레임은 패턴이 전담했으니
+// 일반 추격/평타를 건너뛰고, false면 일반 CHASE(추격·사거리 평타)에 맡긴다.
+//   - 진행 중(슬램 공중 / 패링 밀림 / 거대 변신)이면 그 단계를 갱신하고 true.
+//   - idle: 쿨을 흘리고, 중심 직선거리가 patternDist 이상이고 쿨이 찼으며 바닥이면
+//     점프슬램(A)/불기둥(B)을 랜덤으로 발동(true). 그 외(가까움/쿨대기)는 false.
+function updateIfritPatterns(enemy, dt) {
+  const cfg = enemy.ai.ifrit;
+  if (enemy.ifritPhase == null) enemy.ifritPhase = "idle";
+  if (enemy.ifritPatternCd == null) enemy.ifritPatternCd = cfg.cooldown;
+
+  if (enemy.ifritPhase === "slam") { ifritUpdateSlam(enemy, dt, cfg); return true; }
+  if (enemy.ifritPhase === "pushback") { ifritUpdatePushback(enemy, dt, cfg); return true; }
+  if (enemy.ifritPhase === "transform") { ifritUpdateTransform(enemy, dt, cfg); return true; }
+
+  // idle: 쿨 감소 후 거리 분기.
+  if (enemy.ifritPatternCd > 0) enemy.ifritPatternCd -= dt;
+  const ex = enemy.x + enemy.w / 2, ey = enemy.y + enemy.h / 2;
+  const px = player.x + player.w / 2, py = player.y + player.h / 2;
+  const dist = Math.hypot(px - ex, py - ey);
+  if (dist >= cfg.patternDist && enemy.ifritPatternCd <= 0 && enemy.onGround) {
+    if (Math.random() < 0.5) ifritStartSlam(enemy, cfg);
+    else ifritFirePillar(enemy, cfg);
+    return true;
+  }
+  return false; // 가깝거나(평타) 쿨 대기 → 일반 추격/평타
+}
+
+// 패턴 A 점프슬램 발동: 플레이어 방향 포물선 점프(2단점프 높이). x 이동은 물리 패스가
+// vx=0으로 두므로 슬램 동안 직접 옮긴다(slamVx). 대략 체공시간 안에 플레이어에
+// 도달하도록 수평속도를 잡되 과속은 막는다.
+function ifritStartSlam(enemy, cfg) {
+  enemy.ifritPhase = "slam";
+  enemy.slamAirborne = false; // 한 번 떠야 착지 판정(발동 직후 onGround=true 방지)
+  enemy.slamHitPlayer = false;
+  enemy.vy = -cfg.slamJumpSpeed;
+  enemy.onGround = false;
+  const ex = enemy.x + enemy.w / 2;
+  const px = player.x + player.w / 2;
+  const AIR_EST = 1.1; // 대략적 체공시간(초)
+  const maxVx = 300;
+  enemy.slamVx = Math.max(-maxVx, Math.min(maxVx, (px - ex) / AIR_EST));
+}
+
+function ifritUpdateSlam(enemy, dt, cfg) {
+  // 공중 수평 이동(물리 패스가 x를 옮기지 않으므로 직접).
+  enemy.x += enemy.slamVx * dt;
+  enemy.x = Math.max(0, Math.min(enemy.x, stage.widthPx - enemy.w));
+  if (!enemy.onGround) enemy.slamAirborne = true;
+
+  // 패링 윈도(공중 내내): 플레이어 공격 active 히트박스가 몸통과 겹치고 마주보면 성공.
+  const pHb = getAttackHitbox();
+  if (pHb && player.attackDir === -enemy.facing && aabbOverlap(pHb, getHurtbox(enemy))) {
+    ifritOnSlamParried(enemy, cfg);
+    return;
+  }
+  // 미패링 몸통 접촉 피해(슬램당 1회).
+  if (!player.dead && !enemy.slamHitPlayer && aabbOverlap(getHurtbox(enemy), getHurtbox(player))) {
+    damagePlayer(cfg.slamDamage);
+    enemy.slamHitPlayer = true;
+  }
+  // 착지(떴다가 다시 바닥) → 패링 실패 → 거대 불꽃 변신.
+  if (enemy.slamAirborne && enemy.onGround) ifritStartTransform(enemy, cfg);
+}
+
+// 슬램 패링 성공: 변신 없이 뒤로(플레이어 반대) pushbackDist를 pushbackTime에 걸쳐
+// 밀린다. 상승을 멈추고(vy=0) 이후 중력으로 떨어진다. 자기경직 없음.
+function ifritOnSlamParried(enemy, cfg) {
+  parryFlash = 0.15;
+  TimeControl.freeze(PARRY_HIT_STOP);
+  enemy.ifritPhase = "pushback";
+  enemy.pushbackTime = cfg.pushbackTime;
+  enemy.pushbackVx = -enemy.facing * (cfg.pushbackDist / cfg.pushbackTime); // 뒤로
+  enemy.vy = 0;
+}
+
+function ifritUpdatePushback(enemy, dt, cfg) {
+  enemy.x += enemy.pushbackVx * dt;
+  enemy.x = Math.max(0, Math.min(enemy.x, stage.widthPx - enemy.w));
+  enemy.pushbackTime -= dt;
+  if (enemy.pushbackTime <= 0) {
+    enemy.ifritPhase = "idle";
+    enemy.ifritPatternCd = cfg.cooldown;
+  }
+}
+
+// 거대 불꽃 변신: 발(하단 중앙) 고정으로 가로·세로 transformScale배 확대 + 무적.
+// transformTime초 뒤 원복하고, 변신 해제 직후부터 cooldown 쿨이 시작된다.
+function ifritStartTransform(enemy, cfg) {
+  enemy.ifritPhase = "transform";
+  enemy.transformTime = cfg.transformTime;
+  enemy.transformTick = 0;
+  enemy.invincible = true;
+  ifritSetScale(enemy, cfg.transformScale);
+}
+
+function ifritUpdateTransform(enemy, dt, cfg) {
+  enemy.transformTime -= dt;
+  // 겹치면 transformTickInterval초당 transformTickDmg.
+  if (!player.dead && aabbOverlap(getHurtbox(enemy), getHurtbox(player))) {
+    enemy.transformTick -= dt;
+    if (enemy.transformTick <= 0) {
+      damagePlayer(cfg.transformTickDmg);
+      enemy.transformTick = cfg.transformTickInterval;
+    }
+  } else {
+    enemy.transformTick = 0; // 떨어지면 다음 접촉 즉시 1틱
+  }
+  if (enemy.transformTime <= 0) {
+    ifritSetScale(enemy, 1); // 원복
+    enemy.invincible = false;
+    enemy.ifritPhase = "idle";
+    enemy.ifritPatternCd = cfg.cooldown;
+  }
+}
+
+// 발(하단 중앙)을 고정한 채 이동/피격 박스를 scale배로 맞춘다(원본 크기는 최초 1회
+// baseW/baseH/baseHurt로 보존하고, scale=1이면 원복). 확대 시 맵 밖으로 나가지 않게 clamp.
+function ifritSetScale(enemy, scale) {
+  if (enemy.baseW == null) {
+    enemy.baseW = enemy.w; enemy.baseH = enemy.h;
+    enemy.baseHurtW = enemy.hurt.w; enemy.baseHurtH = enemy.hurt.h;
+  }
+  const cx = enemy.x + enemy.w / 2;
+  const bottom = enemy.y + enemy.h;
+  enemy.w = enemy.baseW * scale;
+  enemy.h = enemy.baseH * scale;
+  enemy.hurt = { w: enemy.baseHurtW * scale, h: enemy.baseHurtH * scale };
+  enemy.x = cx - enemy.w / 2;
+  enemy.y = bottom - enemy.h;
+  enemy.x = Math.max(0, Math.min(enemy.x, stage.widthPx - enemy.w));
+}
+
+// 패턴 B 불기둥: 플레이어 발밑(현재 층 표면)에 불기둥 예고를 깐다(다야 가시 telegraph
+// 구조 재활용, projectiles.js). 발동 즉시 쿨이 시작된다(fire-and-forget — 이프리트는
+// 예고를 깔고 곧장 일반 추격으로 복귀).
+function ifritFirePillar(enemy, cfg) {
+  const footY = player.y + player.h;
+  spawnFirePillar(enemy, player.x + player.w / 2, floorSurfaceY(floorOf(footY)));
+  enemy.ifritPatternCd = cfg.cooldown;
 }
