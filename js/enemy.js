@@ -59,7 +59,7 @@ function updateVerticalChase(enemy, dt) {
 
   // 목표 층: 근접이면 플레이어 층, 아니면 플레이어 층 + 선호 오프셋.
   const playerFloor = floorOf(player.y + player.h);
-  const maxFloor = FLOOR_SURFACES_Y.length - 1;
+  const maxFloor = stage.floorSurfaces.length - 1;
   let targetFloor = enemy.approaching ? playerFloor : playerFloor + enemy.ai.floorPref;
   targetFloor = Math.max(0, Math.min(targetFloor, maxFloor));
 
@@ -233,6 +233,9 @@ function updateEnemies(dt) {
   // 넘겨 'x축은 이동 없이' 두고(벽 충돌은 4층 맵에서 추가) y축만 처리한다.
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
+    // 화면 밖 모서리 저격수(스테이지3 실라/나이아): 고정 위치로 떠 있어 중력·충돌을
+    // 받지 않는다(화면 밖에서 투사체만 쏘는 보스). 좌표를 둔 채 물리 패스를 건너뛴다.
+    if (enemy.floating) continue;
     if (enemy.dropThrough > 0) enemy.dropThrough -= dt; // 드롭스루 타이머 감소
     enemy.vy += GRAVITY * dt; // 중력
     if (enemy.vy > MAX_FALL) enemy.vy = MAX_FALL;

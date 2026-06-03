@@ -206,6 +206,16 @@ const ENEMY_AI = {
   // 광폭화(비비 포식 시 lineEnraged=true): 발사 쿨이 enrageCdMult배 빨라지고, 라인이
   // 패링 불가가 되며(=봉인 불가) 빨갛게 바뀐다 — combat.js applyDevourRipple가 건다.
   kidian: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true, lineShooter: { cdMin: 5, cdMax: 7, damage: 2, telegraph: 1.0, fire: 0.15, parryCdBonus: 10, sealParries: 5, enrageCdMult: 3 } },
+  // ---- 스테이지3(실라/나이아/이프리트/가비아) ----
+  // 0단계(맵+뼈대) 시점에는 넷 다 가만히 서 있는 정지형 placeholder다. 각자의 실제
+  // 행동(이프리트 점프슬램/불기둥, 가비아 카이팅·돌·방어막, 나이아 레이저/파도,
+  // 실라 화면밖 화살)은 이후 단계에서 이 역할들을 확장하며 붙인다(stage3-impl-plan).
+  // 이프리트는 추후 티그와 같은 추격(floorPref 0)으로 바뀌지만 지금은 stationary 더미.
+  ifrit: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  gabia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 실라/나이아: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음).
+  sila: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  naia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
 };
 function aiFor(role) {
   return ENEMY_AI[role] || ENEMY_AI.default;

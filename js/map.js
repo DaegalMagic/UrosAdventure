@@ -10,17 +10,27 @@
 
 const TILE_SIZE = 20;
 
-// 사료스탕스 4층 구조의 '표면 y'(발이 닿는 면). 인덱스 0=맨 위(4층) … 3=바닥(1층).
+// 4층 구조의 '표면 y'(발이 닿는 면). 인덱스 0=맨 위(4층) … 3=바닥(1층).
 // 세로 선호 추격 AI(enemy-ai-and-locomotion)가 발 y ↔ 층 인덱스를 오갈 때 쓴다.
-// 한 층 간격 80px = 4타일. 맵을 바꾸면 이 배열도 함께 맞춰야 한다(층 기반 AI 전제).
-const FLOOR_SURFACES_Y = [260, 340, 420, 500];
+// 스테이지마다 층 간격이 다를 수 있어 stage.floorSurfaces로 분리한다(parseStage가 부여).
+// floorOf/floorSurfaceY는 호출 시점의 전역 stage.floorSurfaces를 읽는다(런타임 전용 헬퍼).
+//   - 기본(사료스탕스/스테이지2): 한 층 간격 80px = 4타일.
+//   - 스테이지3: 한 층 간격 140px = 7타일(2단점프로 2층 도달). makeStage3 참조.
+const DEFAULT_FLOOR_SURFACES_Y = [260, 340, 420, 500];
+const STAGE3_FLOOR_SURFACES_Y = [80, 220, 360, 500];
+
+// 현재 활성 스테이지의 층 표면 배열. stage가 아직 없거나 floorSurfaces가 없으면 기본값.
+function activeFloorSurfaces() {
+  return (typeof stage !== "undefined" && stage && stage.floorSurfaces) || DEFAULT_FLOOR_SURFACES_Y;
+}
 
 // 발 y(박스 하단)에 가장 가까운 층 인덱스(0~3)를 돌려준다.
 function floorOf(footY) {
+  const surfaces = activeFloorSurfaces();
   let best = 0;
   let bestDist = Infinity;
-  for (let i = 0; i < FLOOR_SURFACES_Y.length; i++) {
-    const d = Math.abs(footY - FLOOR_SURFACES_Y[i]);
+  for (let i = 0; i < surfaces.length; i++) {
+    const d = Math.abs(footY - surfaces[i]);
     if (d < bestDist) {
       bestDist = d;
       best = i;
@@ -31,8 +41,9 @@ function floorOf(footY) {
 
 // 층 인덱스(0~3)의 표면 y. 범위를 벗어나면 가장 가까운 끝으로 clamp.
 function floorSurfaceY(index) {
-  const i = Math.max(0, Math.min(index, FLOOR_SURFACES_Y.length - 1));
-  return FLOOR_SURFACES_Y[i];
+  const surfaces = activeFloorSurfaces();
+  const i = Math.max(0, Math.min(index, surfaces.length - 1));
+  return surfaces[i];
 }
 
 // 한 글자(문자)가 어떤 타일인지 정의한다.
@@ -123,7 +134,7 @@ function makeFlatStage(cols, rows, platformCol) {
 }
 
 // 스테이지 2(다야/비비/키디언). 사료스탕스와 같은 4층 구조(표면 y/행을 공유하므로
-// FLOOR_SURFACES_Y를 그대로 쓴다)지만, 메인 발판이 불규칙하게 잦게 끊겨 있고
+// 기본 층 좌표 DEFAULT_FLOOR_SURFACES_Y를 그대로 쓴다)지만, 메인 발판이 불규칙하게 잦게 끊겨 있고
 // 층과 층 '사이'(반층: row23/19/15)에도 발판이 드문드문 있다 — 세로 이동이 더
 // 들쭉날쭉해진다. 1층(바닥)은 사료스탕스처럼 꽉 찬 #(다야가 맨 오른쪽에 앉는다).
 //   메인 층 표면 행: 4층 row13(y260) / 3층 row17(y340) / 2층 row21(y420) / 1층 row25(y500).
@@ -151,9 +162,31 @@ function makeDayaStage() {
   return grid.map((row) => row.join(""));
 }
 
-// 2~7번 더미 맵(스테이지 2만 실제 맵). 너비를 조금씩 달리해 시각적으로 구분되게 한다.
+// 스테이지 3(실라/나이아/이프리트/가비아, 보상=불칼). 사료스탕스/스테이지2와 다른 전용
+// 4층 맵 — 각 층이 맵 가로 전체를 꽉 채운다(좌우 공백 없음). 층 간격 140px = 7타일이라
+// 2단점프(최대 312.5px)로 2층(280px)을 한 번에 넘는다(여유 약 32px). 점프 수치는
+// 전역 공용이라 안 건드린다 — 층 간격만 넓혀 동일 물리로 "2단점프=2층"을 만든다.
+//   층 표면 행/ y(= STAGE3_FLOOR_SURFACES_Y): 4층 row4(y80) / 3층 row11(y220) /
+//   2층 row18(y360) / 1층 바닥 row25(y500). (표면 y = row*20)
+// 1층(바닥)은 꽉 찬 #(적이 빠지지 않게, row25~29). 2~4층은 원웨이 발판(=)으로 가로 전체.
+// 가비아 HP 연동 동적 붕괴(이후 단계)가 이 꽉 찬 층을 칸 단위로 무너뜨린다.
+// 플레이어 스폰 P는 1층 왼쪽(바닥 바로 위).
+function makeStage3() {
+  const COLS = 75;
+  const ROWS = 30;
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill("."));
+  // 1층 바닥: 꽉 찬 #(row25~29).
+  for (let r = 25; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = "#";
+  // 2~4층: 가로 전체를 채운 원웨이 발판(=).
+  for (const r of [18, 11, 4]) for (let c = 0; c < COLS; c++) grid[r][c] = "=";
+  // 플레이어 스폰: 1층 왼쪽(바닥 바로 위 칸).
+  grid[24][3] = "P";
+  return grid.map((row) => row.join(""));
+}
+
+// 2~7번 더미 맵(스테이지 2·3만 실제 맵). 너비를 조금씩 달리해 시각적으로 구분되게 한다.
 STAGES["스테이지 2"] = makeDayaStage();
-STAGES["스테이지 3"] = makeFlatStage(55, 30, 24);
+STAGES["스테이지 3"] = makeStage3();
 STAGES["스테이지 4"] = makeFlatStage(60, 30, 26);
 STAGES["스테이지 5"] = makeFlatStage(64, 30, 28);
 STAGES["스테이지 6"] = makeFlatStage(58, 30, 22);
@@ -202,7 +235,7 @@ function endgameNext(id) {
 // 반환: { cols, rows, widthPx, heightPx, tiles[r][c], spawn{x,y}, goal{x,y} }
 //   - tiles[r][c] 는 TILES 정의 객체
 //   - spawn/goal 은 타일 중심의 픽셀 좌표(없으면 null)
-function parseStage(rows) {
+function parseStage(rows, floorSurfaces) {
   if (!rows || rows.length === 0) {
     throw new Error("스테이지 데이터가 비어 있습니다.");
   }
@@ -254,14 +287,18 @@ function parseStage(rows) {
     tiles,
     spawn,
     goal,
+    // 이 스테이지의 층 표면 y 배열(세로 추격 AI·가시 등 층 헬퍼가 참조). 안 주면 기본값.
+    floorSurfaces: floorSurfaces || DEFAULT_FLOOR_SURFACES_Y,
   };
 }
 
-// 이름으로 스테이지를 파싱해 반환한다.
+// 이름으로 스테이지를 파싱해 반환한다. 스테이지3만 전용 층 좌표(간격 140px)를 쓰고
+// 나머지는 기본(간격 80px) — 기존 스테이지1/2 동작은 그대로 유지된다.
 function loadStage(name) {
   const rows = STAGES[name];
   if (!rows) throw new Error(`존재하지 않는 스테이지: ${name}`);
-  return parseStage(rows);
+  const floorSurfaces = name === "스테이지 3" ? STAGE3_FLOOR_SURFACES_Y : DEFAULT_FLOOR_SURFACES_Y;
+  return parseStage(rows, floorSurfaces);
 }
 
 // 격자 좌표(col, row)의 타일 객체를 반환한다. 스테이지 밖은 가상의 땅 타일로

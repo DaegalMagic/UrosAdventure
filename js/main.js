@@ -218,6 +218,7 @@ function makeEnemy(footX, footY, role = null, hp = BOSS_HP_SOLO, defense = 0, si
     invincible: false, // 무적: 피해를 받지 않는다(무적 폭주 변형)
     selfDrain: 0, // >0이면 초당 이 값만큼 스스로 체력이 깎인다(무적 폭주)
     permaGroggy: false, // 영구 그로기: 타이머 없이 계속 무방비(공격 안 함)
+    floating: false, // 화면 밖 모서리 저격수(스테이지3 실라/나이아): 중력·충돌 면제
     anim: makeAnimator(), // 스프라이트 애니메이션 재생 상태(에셋 없으면 폴백)
   };
 }
@@ -274,6 +275,21 @@ function startStage(name) {
     for (const e of enemies) e.group = enemies;
     // 떨군 단검은 이제 비비가 패링당할 때 생성한다(onParry, dropsDaggerOnParry).
     // 초기에는 비워 둔다(hittables는 위에서 이미 []).
+  } else if (name === "스테이지 3") {
+    // 스테이지3(실라/나이아/이프리트/가비아, 보상=불칼). 0단계는 4보스를 배치만
+    // 하고 행동은 없다(전부 정지형 더미; AI는 stage3-impl-plan 1~4단계에서 붙인다).
+    // 클리어 조건 = 이프리트 + 가비아 HP 0. 실라·나이아는 봉인만 될 뿐 죽지 않는다.
+    //   - 이프리트/가비아: HP 80(BOSS_HP_TRIO). 1층 바닥(발 y=500) 오른쪽에 나란히.
+    //   - 실라/나이아: 화면 밖 위 모서리 저격수(왼쪽/오른쪽). floating으로 떠 있어
+    //     중력·충돌을 받지 않고, HP가 없어(defense=1로 평타 무효) 봉인으로만 무력화된다.
+    const ifrit = makeEnemy(900, 500, "ifrit", BOSS_HP_TRIO);
+    const gabia = makeEnemy(1100, 500, "gabia", BOSS_HP_TRIO);
+    const sila = makeEnemy(-60, 40, "sila", BOSS_HP_TRIO * 99, 1); // 왼쪽 위 화면 밖
+    const naia = makeEnemy(stage.widthPx + 60, 40, "naia", BOSS_HP_TRIO * 99, 1); // 오른쪽 위
+    sila.floating = true;
+    naia.floating = true;
+    enemies = [ifrit, gabia, sila, naia];
+    for (const e of enemies) e.group = enemies; // 서로(자기 포함) 참조(이후 연동용)
   } else {
     enemies = [makeEnemy(510, 580)]; // 임시: 표적 적 하나(발 기준 좌표)
   }
