@@ -256,6 +256,9 @@ function render() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  // 나이아 파도 주의표시(화면 고정): warn 단계에 카메라 왼쪽에서 점멸로 알린다.
+  renderNaiaWaveWarning();
+
   // 받는 피해 2배 디버프(비비 #2) 표시: 좌상단에 남은 시간을 붉게 알린다.
   if (player.vulnTime > 0) {
     ctx.fillStyle = "#ff6b6b";

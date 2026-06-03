@@ -54,6 +54,12 @@ const STONE_W = 20; // 돌 박스
 const STONE_H = 18;
 const GABIA_BLAST_TIME = 0.25; // 자기중심 폭발 판정/연출 지속(초). 짧게 한 번 친다
 
+// 나이아 물줄기 레이저. 슈터(화면 밖 모서리) 중심에서 임의 각도로 뻗는 선분이다.
+// 키디언 라인(축 고정 AABB)과 달리 '회전된 두께 laserThick 띠'라, 판정은 AABB가 아니라
+// 점-선분 거리(플레이어/보스 중심 ↔ 레이저 선분)로 한다(NAIA_LASER_HALF = laserThick/2).
+// 선분 길이는 맵을 충분히 가로지르게 길게 둔다(화면 밖 모서리에서 반대편까지).
+const NAIA_LASER_LEN = 3000; // 레이저 선분 길이(px). 맵 대각선(~1615)보다 충분히 큼
+
 // ---- 상태 ----
 let projectiles = []; // 살아있는 투사체
 let pendingDaggers = []; // 시차 발사 대기열: { delay, shooter }
@@ -62,6 +68,8 @@ let dayaSpikes = []; // 다야 P2 가시: { x, surfaceY, state, t, shooter, hitP
 let dayaRainQueue = []; // 다야 P3 낙하 대기열: { delay, x, shooter }
 let firePillars = []; // 이프리트 불기둥: { x, surfaceY, state, t, shooter, hitPlayer, alive }
 let gabiaBlasts = []; // 가비아 공유 방어막 폭발: { x, y, w, h, t, damage, hitPlayer, alive }
+let naiaLasers = []; // 나이아 레이저: { ox, oy, ex, ey, state, t, shooter, hitPlayer, hitBosses[], alive }
+let naiaWave = null; // 나이아 파도(동시 1개): { shooter, phase("warn"|"active"), t, x, w, speed, ... } | null
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -72,6 +80,20 @@ function resetProjectiles() {
   dayaRainQueue = [];
   firePillars = [];
   gabiaBlasts = [];
+  naiaLasers = [];
+  naiaWave = null;
+}
+
+// 점(px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리. 나이아 레이저(회전된 띠) 판정용.
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy || 1;
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t)); // 선분 양 끝으로 클램프(무한직선이 아니라 선분)
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
 }
 
 // from→to 단위벡터 × speed.
@@ -736,6 +758,130 @@ function updateRainDrop(p, dt) {
   updateSimpleProjectile(p, dt);
 }
 
+// ---- 나이아(물줄기 레이저 / 파도) ----
+// 나이아는 화면 밖 오른쪽 위 모서리에 떠 있는(floating) 정지형 저격수다. 다야 패턴처럼
+// 매 프레임 enemies에서 나이아를 찾아 쿨을 굴려 공격을 결정한다. 매 waveEvery번째 공격은
+// 레이저 대신 파도(naiaWave)다. 파도가 존재(주의표시~소멸)하는 동안은 쿨을 멈추고, 파도가
+// 사라지는 순간 쿨을 다시 채운다(updateNaiaWave). sealed면 새 발사·파도를 시작하지 않는다.
+function updateNaia(dt) {
+  const naia = enemies.find((e) => e.alive && e.role === "naia");
+  if (!naia) return;
+  if (naia.sealed) return; // 봉인: 발사·파도 모두 중지(봉인 카운터는 실라 단계에서 연결)
+  const cfg = naia.ai.naia;
+  if (naia.naiaCd == null) naia.naiaCd = cfg.laserCd; // 첫 발사까지 풀쿨 대기
+  if (naia.naiaCount == null) naia.naiaCount = 0;
+  // 파도가 떠 있는(주의표시 포함) 동안은 쿨 정지. 파도 소멸 시 updateNaiaWave가 쿨을 리셋한다.
+  if (naiaWave) return;
+  naia.naiaCd -= dt;
+  if (naia.naiaCd <= 0) {
+    naia.naiaCount += 1;
+    if (naia.naiaCount % cfg.waveEvery === 0) {
+      spawnNaiaWave(naia); // 파도 차례 — 쿨은 파도가 사라진 뒤에 리셋(여기선 두지 않음)
+    } else {
+      spawnNaiaLaser(naia);
+      naia.naiaCd = cfg.laserCd;
+    }
+  }
+}
+
+// 레이저 한 발 예약: 슈터 중심에서 완전 랜덤한 각도로 길게 뻗는 선분을 telegraph로 띄운다.
+function spawnNaiaLaser(naia) {
+  const ox = projCenterX(naia);
+  const oy = projCenterY(naia);
+  const angle = Math.random() * Math.PI * 2; // 발사각 완전 랜덤
+  naiaLasers.push({
+    ox, oy, angle,
+    ex: ox + Math.cos(angle) * NAIA_LASER_LEN,
+    ey: oy + Math.sin(angle) * NAIA_LASER_LEN,
+    state: "telegraph", t: 0, shooter: naia,
+    hitPlayer: false, hitBosses: [], alive: true,
+  });
+}
+
+// 레이저 진행: telegraph(예고, 무피해) → firing(띠 ON). 패링 불가(회피 전용)라 패링 훅은
+// 없다. firing 동안 점-선분 거리 판정으로 플레이어는 1회 피해, 이프리트는 피해·가비아는
+// 회복(대상별 1회). 슈터가 사라져도(이론상) 진행 중 레이저는 끝까지 처리한다.
+function updateNaiaLasers(dt) {
+  const half = (laser) => laser.shooter.ai.naia.laserThick / 2;
+  for (const L of naiaLasers) {
+    if (!L.alive) continue;
+    const cfg = L.shooter.ai.naia;
+    L.t += dt;
+    if (L.state === "telegraph") {
+      if (L.t >= cfg.laserTelegraph) { L.state = "firing"; L.t = 0; }
+      continue;
+    }
+    // firing: 두께 laserThick 띠가 ON. 점-선분 거리 ≤ 절반이면 명중.
+    const r = half(L);
+    if (!player.dead && !L.hitPlayer) {
+      const ph = getHurtbox(player);
+      const d = pointSegDist(ph.x + ph.w / 2, ph.y + ph.h / 2, L.ox, L.oy, L.ex, L.ey);
+      if (d <= r) { damagePlayer(cfg.laserDamage); L.hitPlayer = true; } // 패링 불가
+    }
+    // 보스 명중: 이프리트 피해 / 가비아 회복(수치 = 플레이어 피해와 동일). 대상별 1회.
+    for (const e of enemies) {
+      if (!e.alive || (e.role !== "ifrit" && e.role !== "gabia")) continue;
+      if (L.hitBosses.includes(e)) continue;
+      const eh = getHurtbox(e);
+      const d = pointSegDist(eh.x + eh.w / 2, eh.y + eh.h / 2, L.ox, L.oy, L.ex, L.ey);
+      if (d <= r) {
+        if (e.role === "ifrit") hitEnemy(e, cfg.bossHit); // 이프리트엔 피해
+        else e.hp = Math.min(e.maxHp, e.hp + cfg.bossHit); // 가비아는 회복(상한 클램프)
+        L.hitBosses.push(e);
+      }
+    }
+    if (L.t >= cfg.laserActive) L.alive = false;
+  }
+  naiaLasers = naiaLasers.filter((L) => L.alive);
+}
+
+// 파도 시전: 맵 가로×waveWidthMult 폭의 세로 띠를 맵 왼쪽 밖에 둔다. 주의표시(warn)
+// waveWarnTime초 → active(왼→오 진행). active에 들어가야 실제 띠가 등장·이동한다.
+function spawnNaiaWave(naia) {
+  const cfg = naia.ai.naia;
+  const w = stage.widthPx * cfg.waveWidthMult;
+  naiaWave = {
+    shooter: naia,
+    phase: "warn", t: 0,
+    warnTime: cfg.waveWarnTime,
+    speed: MOVE_SPEED * cfg.waveSpeedMult, // 플레이어 이동속도의 배수
+    w,
+    x: -w, // 오른쪽 끝이 맵 왼쪽(0)에 닿은 위치에서 시작(active 진입 시 왼쪽에서 등장)
+    damage: cfg.waveDamage,
+    tickInterval: cfg.waveTickInterval,
+    tickTimer: 0, // 0이면 다음 접촉 즉시 1히트(이후 tickInterval마다)
+  };
+}
+
+// 파도 진행. warn 동안은 카메라 왼쪽 주의표시만(렌더는 render.js), 위치는 고정. active에서
+// 왼→오로 이동하며, 플레이어가 파도 가로 범위 안 + 최상층(floor 0)이 아니면 tickInterval초당
+// waveDamage. 파도가 맵에서 완전히 사라지면(왼쪽 끝이 오른쪽 끝을 지남) 종료 + 쿨 리셋.
+function updateNaiaWave(dt) {
+  if (!naiaWave) return;
+  const W = naiaWave;
+  if (W.shooter.sealed) { naiaWave = null; return; } // 봉인되면 진행 중 파도도 중지
+  W.t += dt;
+  if (W.phase === "warn") {
+    if (W.t >= W.warnTime) { W.phase = "active"; W.t = 0; }
+    return;
+  }
+  W.x += W.speed * dt;
+  const pf = getHurtbox(player);
+  const pcx = pf.x + pf.w / 2;
+  const inWave = pcx >= W.x && pcx <= W.x + W.w;
+  const onTop = floorOf(player.y + player.h) === 0; // 최상층 발판 위에서만 회피
+  if (!player.dead && inWave && !onTop) {
+    W.tickTimer -= dt;
+    if (W.tickTimer <= 0) { damagePlayer(W.damage); W.tickTimer = W.tickInterval; }
+  } else {
+    W.tickTimer = 0; // 파도 밖/최상층이면 리셋 — 재진입 시 즉시 한 대
+  }
+  if (W.x > stage.widthPx) { // 왼쪽 끝이 맵 오른쪽 끝을 지남 = 완전 소멸
+    W.shooter.naiaCd = W.shooter.ai.naia.laserCd; // 이제야 쿨 시작
+    naiaWave = null;
+  }
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
   updateRangedEnemies(dt);
@@ -748,6 +894,9 @@ function updateProjectiles(dt) {
   updateFirePillars(dt);
   updateGabiaShared(dt); // 가비아 공유 방어막/무적/폭발 주기(이프리트도 함께 보호)
   updateGabiaBlasts(dt);
+  updateNaia(dt); // 나이아 레이저/파도 발사 결정(쿨·파도 차례)
+  updateNaiaLasers(dt); // 진행 중 레이저(예고→발사·점선분 판정·보스 피해/회복)
+  updateNaiaWave(dt); // 진행 중 파도(주의표시→진행·다단히트·쿨 리셋)
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
@@ -786,6 +935,63 @@ function renderProjectiles() {
   renderDayaSpikes(); // 다야 P2 가시(예고/솟음)
   renderFirePillars(); // 이프리트 불기둥(예고/즉발)
   renderGabiaBlasts(); // 가비아 공유 방어막 폭발(자기중심)
+  renderNaiaLasers(); // 나이아 물줄기 레이저(예고 가는 선 / 발사 두꺼운 띠)
+  renderNaiaWave(); // 나이아 파도(진행 중인 세로 물벽)
+}
+
+// 나이아 레이저: telegraph는 가는 예고선(곧 어디로 올지) + 옅은 띠, firing은 두꺼운
+// 청록 물줄기. 선분 시작점(ox,oy)에서 angle로 회전한 직사각형으로 그린다(월드 좌표).
+function renderNaiaLasers() {
+  for (const L of naiaLasers) {
+    if (!L.alive) continue;
+    const thick = L.shooter.ai.naia.laserThick;
+    ctx.save();
+    ctx.translate(L.ox - camera.x, L.oy - camera.y);
+    ctx.rotate(L.angle);
+    if (L.state === "telegraph") {
+      const cfg = L.shooter.ai.naia;
+      const prog = Math.min(1, L.t / cfg.laserTelegraph); // 0→1 (다가올수록 진하게)
+      ctx.fillStyle = `rgba(90, 200, 255, ${0.08 + 0.16 * prog})`; // 솟을 띠 옅은 윤곽
+      ctx.fillRect(0, -thick / 2, NAIA_LASER_LEN, thick);
+      ctx.fillStyle = `rgba(180, 240, 255, ${0.5 + 0.4 * prog})`; // 가는 예고 심지
+      ctx.fillRect(0, -2, NAIA_LASER_LEN, 4);
+    } else { // firing: 두꺼운 물줄기(바깥 청록 + 안쪽 밝은 코어)
+      ctx.fillStyle = "rgba(40, 170, 235, 0.85)";
+      ctx.fillRect(0, -thick / 2, NAIA_LASER_LEN, thick);
+      ctx.fillStyle = "rgba(225, 250, 255, 0.95)";
+      ctx.fillRect(0, -thick / 4, NAIA_LASER_LEN, thick / 2);
+    }
+    ctx.restore();
+  }
+}
+
+// 나이아 파도: active 동안 맵 세로 전체를 덮는 청록 물벽(왼→오 진행). 앞면(오른쪽 끝)을
+// 밝게 강조해 진행 방향을 보여 준다. warn 단계의 카메라 왼쪽 주의표시는 render.js(화면 고정).
+function renderNaiaWave() {
+  if (!naiaWave || naiaWave.phase !== "active") return;
+  const W = naiaWave;
+  const x = W.x - camera.x;
+  const y = 0 - camera.y;
+  ctx.fillStyle = "rgba(40, 150, 220, 0.35)";
+  ctx.fillRect(x, y, W.w, stage.heightPx);
+  ctx.fillStyle = "rgba(200, 245, 255, 0.7)"; // 선두(오른쪽 끝) 밝은 마루
+  ctx.fillRect(x + W.w - 10, y, 10, stage.heightPx);
+}
+
+// 나이아 파도 주의표시(화면 고정 UI). render()의 restore 뒤(줌/카메라 밖)에서 호출한다.
+// warn 단계에 카메라 왼쪽에서 "← 파도!"를 점멸로 알린다.
+function renderNaiaWaveWarning() {
+  if (!naiaWave || naiaWave.phase !== "warn") return;
+  const blink = 0.5 + 0.5 * Math.abs(Math.sin(naiaWave.t * 8));
+  ctx.save();
+  ctx.fillStyle = `rgba(40, 150, 220, ${0.25 * blink})`; // 왼쪽 가장자리 띠
+  ctx.fillRect(0, 0, 80, canvas.height);
+  ctx.fillStyle = `rgba(120, 220, 255, ${blink})`;
+  ctx.font = "bold 28px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("← 파도!", 16, canvas.height / 2);
+  ctx.restore();
 }
 
 // 가비아 돌: 진행 방향으로 회전한 돌덩이(반사 상태면 금빛). 아래쪽에 그림자 톤.

@@ -254,9 +254,27 @@ const ENEMY_AI = {
       collapseThresholds: [64, 48, 32, 16],
     },
   },
-  // 실라/나이아: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음).
+  // 실라: 화면 밖 모서리 저격수 — 항상 정지형(추격하지 않음). 4단계에서 구현.
   sila: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
-  naia: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 나이아(오른쪽 위 모서리 저격수, 화면 밖). 추격·근접 없이(stationary) 제자리에서
+  // 물줄기 레이저와 파도를 쏜다(projectiles.js updateNaia). floating이라 중력·충돌 면제.
+  //   레이저: 각도 완전 랜덤. laserTelegraph초 예고(패링 불가·회피 전용) → laserActive초
+  //     발사(두께 laserThick px 띠가 ON). 쿨 laserCd초, 데미지 laserDamage. 판정은
+  //     AABB가 아니라 '점-선분 거리 ≤ laserThick/2'(회전된 띠라서). 레이저가 이프리트에
+  //     닿으면 피해(bossHit), 가비아에 닿으면 회복(bossHit) — 대상별 1회.
+  //   파도: 매 waveEvery번째 공격은 레이저 대신 파도. 카메라 왼쪽 주의표시 waveWarnTime초
+  //     → 왼→오 진행(속도 = 플레이어 이동×waveSpeedMult), 가로 = 맵 가로×waveWidthMult.
+  //     waveTickInterval초당 waveDamage 다단히트. 최상층(floor 0) 발판 위에서만 회피.
+  //     쿨은 파도가 맵에서 완전히 사라진 뒤에야 시작(주의표시~파도 존재 동안 쿨 정지).
+  //   sealed면 발사·파도 모두 중지(봉인 카운터는 실라 단계에서 연결).
+  naia: {
+    chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true,
+    naia: {
+      laserTelegraph: 1.2, laserActive: 1.2, laserCd: 12, laserDamage: 2, laserThick: 40,
+      bossHit: 2,
+      waveEvery: 3, waveWarnTime: 2, waveSpeedMult: 1.2, waveWidthMult: 3, waveDamage: 1, waveTickInterval: 1.0,
+    },
+  },
 };
 function aiFor(role) {
   return ENEMY_AI[role] || ENEMY_AI.default;
