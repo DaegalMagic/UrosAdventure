@@ -135,6 +135,17 @@ const ATTACKS = {
     damage: 2,
     parryStun: 0.3,
   },
+  // 셰이디(스테이지4) 접근 평타: 루포 블링크와 같은 구조(kind="blink") — windup 동안
+  // 차원문 전조를 보이다가 windup 종료 시 '플레이어 등 뒤'로 순간이동해 즉시 타격한다
+  // (blinkBehindPlayer 재활용). dmg 1(기본), 일반 패링 가능(parryWeight 기본 1).
+  shadyBlink: {
+    windup: 0.4,
+    active: 0.12,
+    recovery: 0.3,
+    range: { w: 100, h: null, offsetY: 0 },
+    parryable: true,
+    kind: "blink",
+  },
 };
 
 // ---- 적 AI(이동·결정) 상수 (wiki enemy-ai-and-locomotion) ----
@@ -337,8 +348,28 @@ const ENEMY_AI = {
     chaseSpeed: 160, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "rimSwing", special: null, floorPref: 0,
     rim: { cooldown: 7, telegraph: 1.2, slamActive: 0.3, slamDamage: 1, slamStun: 2 },
   },
-  // 셰이디(도주/순간이동형): 프롬프트2에서 구현. 지금은 정지형 placeholder(가만히 서 있는 더미).
-  shady: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 셰이디(도주/순간이동형): 일반 CHASE를 쓰지 않고 enemy.js updateShady가 전담한다
+  // (추격이 아니라 '도주' — stationary 아님). 플레이어 반대로 fleeSpeed로 달아나며
+  // jumpInterval마다 jumpChance로 최대 점프하고, 맵 끝/approachDist 이상 벌어지면
+  // 차원문으로 등 뒤 순간이동 평타(shadyBlink)를 친다. gateCooldown초마다 '차원문 난사'
+  // 패턴(updateShadyBarrage)을 발동한다.
+  //   차원문 난사: gateCount개의 차원문을 플레이어 전/후방 콘(gateConeDeg=±70°, 상·하
+  //     40° 쐐기는 자연 제외)·gateDist(60px)에 차례로 열어, gateOpen초 후 공격(미패링·
+  //     사거리 내면 gateDamage) → 즉시 숨김 → gateGap초 뒤 다음. 차원문은 열린 동안
+  //     패링 가능 — 누적 gateParryCancel(3)회 패링 시 패턴 즉시 취소 + groggyTime초
+  //     그로기(전역 게이지와 무관: groggyDrains=false). gateCount회 완주 시 맵 최상단에서
+  //     거대 무기 낙하(가로 weaponWScale배·세로 weaponHScale배, 가속도 GRAVITY,
+  //     dmg weaponDamage, 패링 불가 — projectiles.js spawnShadyWeapon).
+  shady: {
+    chaseSpeed: 0, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: null, special: null, floorPref: 0,
+    shady: {
+      fleeSpeed: 300, jumpInterval: 0.373, jumpChance: 0.1, approachDist: 500,
+      gateCooldown: 13, gateCount: 6, gateOpen: 0.3, gateGap: 0.2,
+      gateDist: 60, gateConeDeg: 70, gateHitW: 80, gateHitH: 80,
+      gateDamage: 1, gateParryCancel: 3, groggyTime: 3,
+      weaponWScale: 5, weaponHScale: 7, weaponDamage: 2,
+    },
+  },
 };
 function aiFor(role) {
   return ENEMY_AI[role] || ENEMY_AI.default;

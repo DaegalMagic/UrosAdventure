@@ -48,15 +48,13 @@ suite("스테이지4 · 맵/스폰 뼈대", (t) => {
     expect(shady.group).toBe(g.enemies);
   });
 
-  // 셰이디는 아직 정지형 placeholder(프롬프트2에서 구현). 시간이 흘러도 제자리.
-  t.test("셰이디: 아직 정지형 placeholder라 x가 안 변한다", () => {
+  // 셰이디는 프롬프트2에서 도주형으로 구현됨(정지형 placeholder 제거). 상세는 아래 셰이디 suite.
+  t.test("셰이디: 정지형이 아니라 도주형(stationary 제거)", () => {
     const g = loadGame();
     g.startStage("스테이지 4");
     const shady = g.bossOf("shady");
-    expect(shady.ai.stationary).toBeTruthy();
-    const shadyX = shady.x;
-    g.update(60); // 약 1초
-    expect(shady.x).toBe(shadyX);
+    expect(shady.ai.stationary == null).toBeTruthy(); // stationary 플래그 없음
+    expect(shady.ai.shady).toBeTruthy(); // 도주/난사 설정 존재
     expect(shady.alive).toBeTruthy();
   });
 
@@ -208,5 +206,241 @@ suite("스테이지4 · 림", (t) => {
     expect(hbRight.x).toBeGreaterThan(hurt.x - 1); // 박스가 림 왼쪽(뒤)으로 안 뻗음
     const hbLeft = g.makeAttackHitbox(hurt, -1, range); // 왼쪽 바라봄
     expect(hbLeft.x + hbLeft.w).toBeLessThan(hurt.x + hurt.w + 1); // 오른쪽(뒤)으로 안 뻗음
+  });
+});
+
+// ── 프롬프트2: 셰이디(도주/순간이동형) ──────────────────────────────────────
+// data.js shady(fleeSpeed 300·jumpInterval 0.373·gateCooldown 13·gateCount 6 등) +
+//   ATTACKS.shadyBlink + enemy.js updateShady/updateShadyBarrage/makeShadyGate +
+//   projectiles.js spawnShadyWeapon/updateShadyWeapons.
+// 셰이디는 facing이 updateEnemies 루프에서 갱신되므로, updateShady 단독 호출 테스트는
+// facing을 직접 세팅한다(도주 방향 = -facing).
+suite("스테이지4 · 셰이디", (t) => {
+  // AI 설정: 도주형(stationary 아님) + shady 하위 수치(스펙 그대로).
+  t.test("설정: fleeSpeed 300·jumpInterval 0.373·gateCooldown 13·gateCount 6", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const cfg = g.bossOf("shady").ai.shady;
+    expect(cfg.fleeSpeed).toBe(300);
+    expect(cfg.jumpInterval).toBe(0.373);
+    expect(cfg.jumpChance).toBe(0.1);
+    expect(cfg.approachDist).toBe(500);
+    expect(cfg.gateCooldown).toBe(13);
+    expect(cfg.gateCount).toBe(6);
+    expect(cfg.weaponDamage).toBe(2);
+  });
+
+  // 도주: 플레이어 반대 x로 fleeSpeed(300px/s). 플레이어가 오른쪽이면 왼쪽으로 달아난다.
+  t.test("도주: 플레이어 반대로 300px/s 이동", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.x = 700; shady.onGround = true; shady.shadyGateCd = 99; // 난사 억제
+    shady.facing = 1; // 플레이어가 오른쪽(매 프레임 facing은 플레이어 쪽)
+    g.player.x = 800; g.player.y = shady.y; // 가까이(<500), 맵 끝 아님
+    const x0 = shady.x;
+    g.updateShady(shady, 0.1);
+    expect(shady.x).toBeCloseTo(x0 - 30, 1e-6); // -facing*300*0.1 = 왼쪽 30px
+  });
+
+  // 점프: jumpInterval 만료 시 jumpChance(10%) 굴림 — random<0.1이면 최대 점프(JUMP_SPEED).
+  t.test("점프: 타이머 만료 + random<0.1 → 최대 점프(vy=-JUMP_SPEED)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.x = 700; shady.onGround = true; shady.shadyGateCd = 99;
+    shady.facing = 1; shady.shadyJumpTimer = 0.005; // 곧 만료
+    g.player.x = 760; g.player.y = shady.y; // 가까이(도주만)
+    g.eval("Math.random=()=>0.05;"); // <0.1 → 점프
+    const JUMP = g.eval("JUMP_SPEED");
+    g.updateShady(shady, 0.016);
+    expect(shady.vy).toBe(-JUMP);
+    expect(shady.shadyJumpTimer).toBeCloseTo(0.373, 1e-6); // 타이머 재충전
+  });
+
+  // 점프 확률: random>=0.1이면 점프 안 함(vy 그대로).
+  t.test("점프: random>=0.1이면 점프 안 함", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.x = 700; shady.onGround = true; shady.shadyGateCd = 99;
+    shady.facing = 1; shady.shadyJumpTimer = 0.005; shady.vy = 0;
+    g.player.x = 760; g.player.y = shady.y;
+    g.eval("Math.random=()=>0.5;"); // >=0.1 → 점프 안 함
+    g.updateShady(shady, 0.016);
+    expect(shady.vy).toBe(0);
+  });
+
+  // 접근 평타(거리): 플레이어와 approachDist(500) 이상 → 등 뒤 블링크 평타 발동.
+  t.test("접근 평타: ≥500px → shadyBlink(블링크) 발동", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.x = 400; shady.onGround = true; shady.shadyGateCd = 99;
+    shady.facing = 1;
+    g.player.x = 1000; g.player.y = shady.y; // 600px 벌어짐(≥500)
+    g.updateShady(shady, 0.016);
+    expect(shady.state).toBe("attack");
+    expect(shady.attack).toBe(g.eval("ATTACKS.shadyBlink"));
+    expect(shady.blinkPending).toBe(true);
+  });
+
+  // 접근 평타(맵 끝): 좌우 끝에 몰리면 거리와 무관하게 블링크(가까워도 발동).
+  t.test("접근 평타: 맵 끝 도달 시 거리 무관 블링크 발동", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.x = 0; shady.onGround = true; shady.shadyGateCd = 99; // 왼쪽 끝
+    shady.facing = 1;
+    g.player.x = 200; g.player.y = shady.y; // 가까움(<500)인데도 맵 끝이라 발동
+    g.updateShady(shady, 0.016);
+    expect(shady.state).toBe("attack");
+    expect(shady.attack).toBe(g.eval("ATTACKS.shadyBlink"));
+  });
+
+  // shadyBlink spec: kind blink·windup 0.4·패링 가능·dmg 기본 1(damage 필드 없음).
+  t.test("shadyBlink: kind blink·windup 0.4·패링 가능·dmg 기본", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const a = g.eval("ATTACKS.shadyBlink");
+    expect(a.kind).toBe("blink");
+    expect(a.windup).toBe(0.4);
+    expect(a.parryable).toBe(true);
+    expect(a.damage == null).toBeTruthy(); // dmg 기본 1
+  });
+
+  // 차원문 난사 발동: 쿨이 차고 바닥이면 barrage 시작(index 0·phase open·gate 존재).
+  t.test("난사: 쿨참·바닥 → barrage 시작", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    shady.onGround = true; shady.shadyGateCd = 0;
+    g.updateShady(shady, 0.016);
+    expect(shady.shadyBarrage).toBeTruthy();
+    expect(shady.shadyBarrage.index).toBe(0);
+    expect(shady.shadyBarrage.phase).toBe("open");
+    expect(shady.shadyBarrage.gate).toBeTruthy();
+  });
+
+  // 차원문 위치: 플레이어 중심에서 gateDist(60px), 전/후방 콘(±70°)이라 상·하 쐐기 제외
+  // → 세로 성분 |dy| ≤ 60·sin70°. 100개 샘플 모두 만족해야 한다.
+  t.test("차원문 위치: 60px 거리·상하 40° 쐐기 제외(수평 ±70°)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    const pcx = g.player.x + g.player.w / 2;
+    const pcy = g.player.y + g.player.h / 2;
+    const maxDy = 60 * Math.sin((70 * Math.PI) / 180) + 1e-9;
+    for (let i = 0; i < 100; i++) {
+      const gate = g.makeShadyGate(cfg);
+      const dx = gate.cx - pcx, dy = gate.cy - pcy;
+      expect(Math.hypot(dx, dy)).toBeCloseTo(60, 1e-6); // 정확히 60px
+      expect(Math.abs(dy) <= maxDy).toBeTruthy(); // 위/아래 쐐기에 안 들어감
+    }
+  });
+
+  // 차원문 공격: open 0.3초 후, 미패링이고 사거리 안이면 dmg + 즉시 숨김(gap).
+  t.test("차원문 공격: 0.3초 후 사거리 내 플레이어에 dmg + gap 전이", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    g.startShadyBarrage(shady, cfg);
+    // 차원문을 플레이어 중심에 고정(사거리 안 보장).
+    const pcx = g.player.x + g.player.w / 2, pcy = g.player.y + g.player.h / 2;
+    shady.shadyBarrage.gate = { cx: pcx, cy: pcy, parried: false };
+    const hp0 = g.player.hp;
+    g.updateShadyBarrage(shady, 0.3, cfg); // open 종료 → 공격
+    expect(g.player.hp).toBe(hp0 - 1);
+    expect(shady.shadyBarrage.phase).toBe("gap");
+  });
+
+  // 차원문 회피: 공격 순간 사거리 밖(옆으로 비킴)이면 무피해.
+  t.test("차원문 회피: 사거리 밖이면 무피해", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    g.startShadyBarrage(shady, cfg);
+    const pcy = g.player.y + g.player.h / 2;
+    shady.shadyBarrage.gate = { cx: g.player.x + 600, cy: pcy, parried: false }; // 멀리
+    const hp0 = g.player.hp;
+    g.updateShadyBarrage(shady, 0.3, cfg);
+    expect(g.player.hp).toBe(hp0); // 무피해
+    expect(shady.shadyBarrage.phase).toBe("gap");
+  });
+
+  // 패링 누적 3회 → 난사 즉시 취소 + 3초 그로기(전역 게이지 무관) + 낙하 무기 없음.
+  t.test("패링: 누적 3회 → 취소 + 3초 그로기(게이지 무관)·낙하 없음", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    g.startShadyBarrage(shady, cfg);
+    // 플레이어가 차원문 쪽(오른쪽)으로 평타 active 상태가 되게 세팅.
+    g.player.attack = g.eval("ATTACKS.playerSlash");
+    g.player.attackElapsed = 0; // windup 0 → 즉시 active
+    g.player.attackDir = 1;
+    const pcx = g.player.x + g.player.w / 2, pcy = g.player.y + g.player.h / 2;
+    const gauge0 = shady.groggyGauge;
+    for (let i = 0; i < 3 && shady.shadyBarrage; i++) {
+      shady.shadyBarrage.gate = { cx: pcx + 30, cy: pcy, parried: false };
+      shady.shadyBarrage.phase = "open";
+      shady.shadyBarrage.t = 0;
+      g.updateShadyBarrage(shady, 0.016, cfg); // 이 차원문 패링
+    }
+    expect(shady.shadyBarrage == null).toBeTruthy(); // 취소
+    expect(shady.groggyTime).toBe(3);
+    expect(shady.groggyDrains).toBe(false); // 전역 게이지 드레인 안 함
+    expect(shady.groggyGauge).toBe(gauge0); // 게이지 무관(누적 안 됨)
+    expect(g.shadyWeapons.length).toBe(0); // 취소 시 낙하 무기 없음
+  });
+
+  // 6회 완주 → 낙하 무기 1개 생성 + barrage 종료 + 쿨 재충전.
+  t.test("완주: 6회 다 돌면 낙하 무기 생성 + 종료", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const cfg = shady.ai.shady;
+    g.player.hp = 99; // 피격 사망 노이즈 제거(완주만 확인)
+    g.startShadyBarrage(shady, cfg);
+    for (let i = 0; i < 6 && shady.shadyBarrage; i++) {
+      g.updateShadyBarrage(shady, 0.3, cfg); // open → 공격 → gap
+      g.updateShadyBarrage(shady, 0.2, cfg); // gap → 다음(마지막엔 완주 처리)
+    }
+    expect(shady.shadyBarrage == null).toBeTruthy();
+    expect(g.shadyWeapons.length).toBe(1);
+    expect(shady.shadyGateCd).toBe(13); // 쿨 재충전
+  });
+
+  // 낙하 무기 spec: 가로 플레이어×5(225)·세로 ×7(420)·dmg 2. 중력으로 가속 낙하.
+  t.test("낙하 무기: 225×420·dmg 2·중력 가속 낙하", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    g.spawnShadyWeapon(shady, 700);
+    const w = g.shadyWeapons[0];
+    expect(w.w).toBe(225);
+    expect(w.h).toBe(420);
+    expect(w.damage).toBe(2);
+    const y0 = w.y, vy0 = w.vy;
+    g.eval("updateShadyWeapons(0.1)");
+    expect(g.shadyWeapons[0].vy).toBeGreaterThan(vy0); // 중력으로 vy 증가
+    expect(g.shadyWeapons[0].y).toBeGreaterThan(y0); // 아래로 낙하
+  });
+
+  // 낙하 무기 접촉: 플레이어와 겹치면 dmg 2(패링 불가 — 무조건 피해).
+  t.test("낙하 무기: 접촉 시 dmg 2(패링 불가)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 4");
+    const shady = g.bossOf("shady");
+    const pcx = g.player.x + g.player.w / 2;
+    g.spawnShadyWeapon(shady, pcx); // 플레이어 머리 위
+    const w = g.shadyWeapons[0];
+    w.y = g.player.y; // 플레이어와 겹치게 끌어내림
+    const hp0 = g.player.hp;
+    g.eval("updateShadyWeapons(0.016)");
+    expect(g.player.hp).toBe(hp0 - 2);
   });
 });

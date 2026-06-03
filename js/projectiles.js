@@ -75,6 +75,7 @@ let gabiaBlasts = []; // 가비아 공유 방어막 폭발: { x, y, w, h, t, dam
 let naiaLasers = []; // 나이아 레이저: { ox, oy, ex, ey, state, t, shooter, hitPlayer, hitBosses[], alive }
 let naiaLaserQueue = []; // 시차 발사 대기열(볼리): { delay, shooter, aimPlayer }
 let naiaWave = null; // 나이아 파도(동시 1개): { shooter, phase("warn"|"active"), t, x, w, speed, ... } | null
+let shadyWeapons = []; // 셰이디 차원문 난사 완주 시 낙하하는 거대 무기: { x, y, w, h, vy, damage, hitPlayer, alive }
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -88,6 +89,7 @@ function resetProjectiles() {
   naiaLasers = [];
   naiaLaserQueue = [];
   naiaWave = null;
+  shadyWeapons = [];
 }
 
 // 점(px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리. 나이아 레이저(회전된 띠) 판정용.
@@ -1066,8 +1068,60 @@ function updateSilaMobs(dt) {
   }
 }
 
+// ---- 셰이디 낙하 무기(shadyWeapons) ----
+// 차원문 난사 6회 완주 시 enemy.js updateShadyBarrage가 spawn한다. 맵 최상단에서
+// 중력(GRAVITY)으로 떨어지는 거대 무기 — 가로 플레이어×weaponWScale·세로 ×weaponHScale.
+// dmg weaponDamage(2), 패링 불가(회피 전용). 발동 시점 플레이어 x를 노리고 떨어지므로
+// 가로로 비켜야 한다. 화면(맵) 아래로 완전히 지나가면 소멸한다.
+function spawnShadyWeapon(shooter, cx) {
+  const cfg = shooter.ai.shady;
+  const w = PLAYER_W * cfg.weaponWScale; // 225
+  const h = PLAYER_H * cfg.weaponHScale; // 420
+  shadyWeapons.push({
+    x: cx - w / 2,
+    y: -h, // 맵 최상단 위(전부 화면 밖)에서 낙하 시작
+    w, h, vy: 0,
+    damage: cfg.weaponDamage,
+    hitPlayer: false, // 접촉 1회 피해(빠졌다 다시 들어와도 재적용 안 함 — 한 번만)
+    alive: true,
+  });
+}
+
+function updateShadyWeapons(dt) {
+  for (const wpn of shadyWeapons) {
+    if (!wpn.alive) continue;
+    wpn.vy += GRAVITY * dt; // 낙하 가속도 = 중력
+    wpn.y += wpn.vy * dt;
+    // 접촉 1회 피해(패링 불가 — getAttackHitbox 검사 없음).
+    if (!wpn.hitPlayer && !player.dead && aabbOverlap(wpn, getHurtbox(player))) {
+      damagePlayer(wpn.damage);
+      wpn.hitPlayer = true;
+    }
+    if (wpn.y > stage.heightPx) wpn.alive = false; // 맵 아래로 완전히 지나감 → 소멸
+  }
+  shadyWeapons = shadyWeapons.filter((w) => w.alive);
+}
+
+// 거대 무기: 어두운 강철 칼날(가로로 넓고 세로로 긴 직사각형) + 위험 테두리. 패링
+// 불가라 막힘 색(주황) 윤곽으로 "막지 말고 피하라"를 알린다.
+function renderShadyWeapons() {
+  for (const wpn of shadyWeapons) {
+    if (!wpn.alive) continue;
+    const x = wpn.x - camera.x;
+    const y = wpn.y - camera.y;
+    ctx.fillStyle = "#2a2f3a"; // 칼날 본체(어두운 강철)
+    ctx.fillRect(x, y, wpn.w, wpn.h);
+    ctx.fillStyle = "rgba(200, 210, 225, 0.5)"; // 가운데 능선 하이라이트
+    ctx.fillRect(x + wpn.w / 2 - 6, y, 12, wpn.h);
+    ctx.strokeStyle = "rgba(255, 140, 0, 0.9)"; // 패링 불가 경고 윤곽
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x, y, wpn.w, wpn.h);
+  }
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
+  updateShadyWeapons(dt);
   updateRangedEnemies(dt);
   processPendingDaggers(dt);
   updateLineShooters(dt);
@@ -1126,6 +1180,7 @@ function renderProjectiles() {
   renderGabiaBlasts(); // 가비아 공유 방어막 폭발(자기중심)
   renderNaiaLasers(); // 나이아 물줄기 레이저(예고 가는 선 / 발사 두꺼운 띠)
   renderNaiaWave(); // 나이아 파도(진행 중인 세로 물벽)
+  renderShadyWeapons(); // 셰이디 차원문 난사 완주 시 낙하하는 거대 무기
 }
 
 // 나이아 레이저: telegraph는 가는 예고선(곧 어디로 올지) + 옅은 띠, firing은 두꺼운

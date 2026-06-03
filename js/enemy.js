@@ -191,6 +191,11 @@ function updateEnemies(dt) {
     // true면 이번 프레임은 패턴이 전담(추격/평타 건너뜀), false면 일반 CHASE에 맡긴다.
     if (enemy.role === "rim" && updateRimPatterns(enemy, dt)) continue;
 
+    // 셰이디(스테이지4): 추격이 아니라 '도주'라 일반 CHASE를 안 쓴다 — updateShady가
+    // 이동(도주/점프)·등 뒤 평타·차원문 난사를 전담한다(가비아처럼 직접 옮기고 continue).
+    // 등 뒤 평타(블링크)를 발동하면 state="attack"로 빠져 위 FSM이 텔레포트를 처리한다.
+    if (enemy.role === "shady") { updateShady(enemy, dt); continue; }
+
     // CHASE: 행동 우선순위 — ① gap-closer 스페셜(거리 무관, 쿨+조건) →
     //        ② 사거리 안이면 공격(평타 또는 rangeReplace 스페셜) → ③ 추격 이동.
     const sp = enemy.ai.special;
@@ -525,4 +530,143 @@ function rimUpdateSlamStrike(enemy, dt, cfg) {
   }
   enemy.rimStrike += dt;
   if (enemy.rimStrike >= cfg.slamActive) enemy.rimPhase = "idle";
+}
+
+// ---- 셰이디(스테이지4 보스) — 도주 / 등 뒤 순간이동 평타 / 차원문 난사 ----
+// 추격형(림)과 정반대로 플레이어에게서 '달아난다'. 일반 CHASE를 쓰지 않고 이 함수가
+// 이동(x)을 직접 옮긴 뒤 continue로 빠진다(세로 물리는 updateEnemies 물리 패스가 처리).
+//   ① 차원문 난사 진행 중이면 시퀀서(updateShadyBarrage)가 전담(도주/점프 정지).
+//   ② 난사 쿨(gateCooldown)이 차고 바닥이면 난사 발동.
+//   ③ 맵 좌우 끝 도달 또는 플레이어와 approachDist 이상 벌어지면 → 차원문으로 등 뒤
+//      순간이동 평타(shadyBlink, kind="blink"). 발동하면 state="attack"로 빠져 위 FSM이
+//      windup 종료 시 blinkBehindPlayer로 등 뒤 텔레포트를 처리한다(루포와 동일 경로).
+//   ④ 그 외: 플레이어 반대 x로 fleeSpeed 도주 + jumpInterval마다 jumpChance로 최대 점프.
+function updateShady(enemy, dt) {
+  const cfg = enemy.ai.shady;
+
+  // ① 차원문 난사 진행 중: 전용 시퀀서가 전담(이동·점프 정지).
+  if (enemy.shadyBarrage) { updateShadyBarrage(enemy, dt, cfg); return; }
+
+  // ② 난사 쿨: 차고 바닥이면 발동(공중이면 grounded까지 대기).
+  if (enemy.shadyGateCd == null) enemy.shadyGateCd = cfg.gateCooldown;
+  enemy.shadyGateCd -= dt;
+  if (enemy.shadyGateCd <= 0 && enemy.onGround) {
+    startShadyBarrage(enemy, cfg);
+    return;
+  }
+
+  // ③ 접근 평타: 맵 끝 도달 또는 플레이어와 approachDist 이상 → 등 뒤 블링크 평타.
+  const ecx = enemy.x + enemy.w / 2;
+  const pcx = player.x + player.w / 2;
+  const dist = Math.abs(pcx - ecx);
+  const atEdge = enemy.x <= 0 || enemy.x + enemy.w >= stage.widthPx;
+  if (dist >= cfg.approachDist || atEdge) {
+    startEnemyAttack(enemy, "shadyBlink");
+    enemy.blinkPending = true; // windup 종료 시 등 뒤로 텔레포트(FSM blink 블록)
+    return;
+  }
+
+  // ④ 평소: 플레이어 반대 x로 도주(facing은 매 프레임 플레이어 쪽 → -facing이 도주 방향).
+  enemy.x += -enemy.facing * cfg.fleeSpeed * dt;
+  enemy.x = Math.max(0, Math.min(enemy.x, stage.widthPx - enemy.w));
+
+  // 점프: jumpInterval마다 1회 판정, jumpChance(10%)로 최대 점프(바닥일 때만).
+  if (enemy.shadyJumpTimer == null) enemy.shadyJumpTimer = cfg.jumpInterval;
+  enemy.shadyJumpTimer -= dt;
+  if (enemy.shadyJumpTimer <= 0) {
+    enemy.shadyJumpTimer = cfg.jumpInterval;
+    if (enemy.onGround && Math.random() < cfg.jumpChance) startJump(enemy);
+  }
+}
+
+// 차원문 한 개를 플레이어 전방/후방 콘에 배치한다. 콘 = 플레이어 정면(facing) 또는
+// 후면(-facing) 기준 ±gateConeDeg(70°). 이 두 콘이 수평을 중심으로 ±70°씩 덮으면
+// 위/아래 각 40° 쐐기(콘 사이 빈틈)는 자연히 제외된다(스펙의 "상·하 40° 쐐기 제외").
+function makeShadyGate(cfg) {
+  const pcx = player.x + player.w / 2;
+  const pcy = player.y + player.h / 2;
+  const front = Math.random() < 0.5; // 전방/후방 50:50
+  const dir = (front ? player.facing : -player.facing); // 콘 중심 수평 방향(+1 우/-1 좌)
+  const base = dir > 0 ? 0 : Math.PI; // 0=오른쪽, π=왼쪽
+  const spread = (Math.random() * 2 - 1) * cfg.gateConeDeg * (Math.PI / 180); // ±70°
+  const a = base + spread;
+  return {
+    cx: pcx + Math.cos(a) * cfg.gateDist,
+    cy: pcy + Math.sin(a) * cfg.gateDist,
+    parried: false, // 이 차원문을 패링했는가(패링하면 공격 순간 무피해)
+  };
+}
+
+// 차원문 타격 박스(판정/렌더 공용): 차원문 중심에 gateHitW×gateHitH AABB. 차원문이
+// 플레이어 중심에서 60px 거리라, 이 박스가 차원문 쪽에서 플레이어 자리로 뻗어 친다 —
+// 차원문이 열린 동안(0.3초) 옆으로 비키면 공격 순간 빗나간다(회피), 마주 베면 패링.
+function shadyGateBox(gate, cfg) {
+  return { x: gate.cx - cfg.gateHitW / 2, y: gate.cy - cfg.gateHitH / 2, w: cfg.gateHitW, h: cfg.gateHitH };
+}
+
+// 차원문 난사 시작: 첫 차원문을 열고 시퀀서 상태를 건다(index 0..gateCount-1).
+function startShadyBarrage(enemy, cfg) {
+  enemy.shadyBarrage = { index: 0, t: 0, phase: "open", parries: 0, gate: makeShadyGate(cfg) };
+}
+
+// 차원문 난사 시퀀서. 차원문마다 open(열림·패링 윈도) → gateOpen초 후 공격(미패링·
+// 사거리 내면 dmg) → 즉시 숨김 → gap(gateGap초) → 다음 차원문. gateCount회 완주하면
+// 맵 최상단에서 거대 무기를 떨군다(spawnShadyWeapon). 누적 패링이 gateParryCancel(3)에
+// 닿으면 즉시 취소 + 그로기(별도 카운터 — 전역 그로기 게이지와 무관).
+function updateShadyBarrage(enemy, dt, cfg) {
+  const b = enemy.shadyBarrage;
+  b.t += dt;
+
+  if (b.phase === "open") {
+    const box = shadyGateBox(b.gate, cfg);
+    // 패링 윈도: 플레이어 공격 히트박스가 차원문과 겹치고 그쪽을 향해 베면 성사.
+    if (!b.gate.parried) {
+      const pHb = getAttackHitbox();
+      const gateDir = b.gate.cx >= player.x + player.w / 2 ? 1 : -1; // 차원문이 플레이어 기준 좌/우
+      if (pHb && player.attackDir === gateDir && aabbOverlap(pHb, box)) {
+        b.gate.parried = true;
+        b.parries += 1;
+        parryFlash = 0.15;
+        TimeControl.freeze(PARRY_HIT_STOP);
+        if (b.parries >= cfg.gateParryCancel) { shadyCancelBarrage(enemy, cfg); return; }
+      }
+    }
+    // 공격 순간: 미패링이고 플레이어가 타격 범위 안이면 피해. 즉시 숨김 → gap.
+    if (b.t >= cfg.gateOpen) {
+      if (!b.gate.parried && !player.dead && aabbOverlap(box, getHurtbox(player))) {
+        damagePlayer(cfg.gateDamage);
+      }
+      b.phase = "gap";
+      b.t = 0;
+    }
+    return;
+  }
+
+  // gap: 숨김 상태로 gateGap초 대기 후 다음 차원문(또는 완주 처리).
+  if (b.t >= cfg.gateGap) {
+    b.index += 1;
+    if (b.index >= cfg.gateCount) {
+      // gateCount회 완주 → 맵 최상단에서 거대 무기 낙하(패링 불가) + 난사 종료.
+      spawnShadyWeapon(enemy, player.x + player.w / 2);
+      enemy.shadyBarrage = null;
+      enemy.shadyGateCd = cfg.gateCooldown;
+      return;
+    }
+    b.gate = makeShadyGate(cfg);
+    b.phase = "open";
+    b.t = 0;
+  }
+}
+
+// 누적 3회 패링 → 난사 즉시 취소 + groggyTime초 그로기. 이 그로기는 전역 그로기
+// 게이지와 무관하다(groggyDrains=false → 종료 시 게이지를 드레인하지 않아 누적 보존).
+// 낙하 무기는 취소 시 떨어지지 않는다(완주 분기에서만 spawn).
+function shadyCancelBarrage(enemy, cfg) {
+  enemy.shadyBarrage = null;
+  enemy.shadyGateCd = cfg.gateCooldown; // 다음 난사까지 풀쿨
+  enemy.groggyTime = cfg.groggyTime;    // 3초 그로기(updateEnemies 그로기 블록이 처리)
+  enemy.groggyDrains = false;           // 전역 게이지 무관(보존)
+  enemy.attack = null;
+  enemy.parried = false;
+  enemy.hitPlayer = false;
 }

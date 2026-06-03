@@ -219,6 +219,24 @@ function renderEnemies() {
         ctx.fillRect(0 - camera.x, surfaceY - camera.y - 6, stage.widthPx, bandH + 12);
       }
     }
+
+    // 셰이디 차원문 난사: open(열림) 상태의 현재 차원문을 보라색 포탈로 그린다(패링
+    // 윈도). 패링된 차원문은 흐리게 — 공격 순간 무피해라는 신호. gap(숨김) 동안엔
+    // 아무것도 그리지 않는다(즉시 숨김). 낙하 무기는 projectiles.js가 따로 그린다.
+    if (enemy.shadyBarrage && enemy.shadyBarrage.phase === "open") {
+      const g = enemy.shadyBarrage.gate;
+      const r = enemy.ai.shady.gateHitW / 2;
+      ctx.save();
+      ctx.globalAlpha = g.parried ? 0.3 : 1;
+      ctx.fillStyle = "rgba(150, 90, 220, 0.35)"; // 포탈 안쪽(보라)
+      ctx.beginPath();
+      ctx.arc(g.cx - camera.x, g.cy - camera.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(200, 140, 255, 0.95)"; // 포탈 테두리
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 }
 
