@@ -113,6 +113,28 @@ const ATTACKS = {
     parryable: false,
     appliesVuln: true,
   },
+  // 림(스테이지4) 평타: 0.5초 시전 후 타격. 범위 세로=캐릭터 동일(h null)·가로 3배
+  // (ENEMY_HURT_W 45×3 = 135). dmg 1(기본). 일반 패링 가능.
+  rimSwing: {
+    windup: 0.5,
+    active: 0.1,
+    recovery: 0.3,
+    range: { w: 135, h: null, offsetY: 0 },
+    parryable: true,
+  },
+  // 림 광역 강타(패턴②): 1.2초 기 모으기(긴 windup=telegraph) → 평타 범위의 가로 5배·
+  // 세로 5배(135×5=675, 60×5=300; offsetY -120으로 세로 중앙 정렬 → 점프로 못 피함).
+  // 발동 방향으로만 뻗어 '림 뒤쪽은 비피격'(makeAttackHitbox가 facing 방향으로 뻗음).
+  // dmg 2. 패링 가능하지만 parryStun: 패링 성공 시 플레이어가 0.3초 행동불가(패링 리스크).
+  rimAoe: {
+    windup: 1.2,
+    active: 0.3,
+    recovery: 0.5,
+    range: { w: 675, h: 300, offsetY: -120 },
+    parryable: true,
+    damage: 2,
+    parryStun: 0.3,
+  },
 };
 
 // ---- 적 AI(이동·결정) 상수 (wiki enemy-ai-and-locomotion) ----
@@ -302,9 +324,20 @@ const ENEMY_AI = {
     },
   },
   // ---- 스테이지4(림/셰이디 2인 동시전, 보상=수의) ----
-  // 0단계(맵+뼈대) 시점엔 둘 다 정지형 placeholder다(가만히 서 있는 더미). 실제 행동은
-  // 림=프롬프트1(추격/강타), 셰이디=프롬프트2(도주/순간이동), 아공간 연동=프롬프트3에서 붙인다.
-  rim: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 림(추격/강타형): 플레이어 0.8배(160px/s)로 티그식 같은 층 추격(floorPref 0). 일반
+  // CHASE(추격+사거리 평타 rimSwing)를 그대로 쓰고, enemy.js updateRimPatterns가 그 위에
+  // 쿨 7초 패턴(둘 중 랜덤)을 얹는다.
+  //   ① 내려찍기(slam): telegraph초 기 모으기 → 바닥 강타. 강타 순간 '점프하지 않고
+  //      지면에 있는'(player.onGround) 플레이어에게 slamDamage + slamStun초 행동불가.
+  //      점프로 회피(공중이면 안 맞음). 패링 불가 — 전용 phase로 처리(enemy.attack 미사용).
+  //   ② 광역 강타(aoe): 일반 공격 rimAoe(windup 1.2=기 모으기)로 위임 — telegraph·판정·
+  //      패링이 전부 기존 파이프라인을 탄다. dmg 2, 림 전방으로만 뻗어 뒤쪽 비피격,
+  //      패링 시 플레이어 0.3초 행동불가(rimAoe.parryStun).
+  rim: {
+    chaseSpeed: 160, attackRangeX: ENEMY_ATTACK_RANGE_X, basic: "rimSwing", special: null, floorPref: 0,
+    rim: { cooldown: 7, telegraph: 1.2, slamActive: 0.3, slamDamage: 1, slamStun: 2 },
+  },
+  // 셰이디(도주/순간이동형): 프롬프트2에서 구현. 지금은 정지형 placeholder(가만히 서 있는 더미).
   shady: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
 };
 function aiFor(role) {

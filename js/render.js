@@ -91,7 +91,7 @@ function renderEnemies() {
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아", silaMob: "잡몹" }[enemy.role];
+        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아", silaMob: "잡몹", rim: "림", shady: "셰이디" }[enemy.role];
         if (label) ctx.fillText(label, edx + enemy.w / 2, edy + enemy.h / 2);
       }
     }
@@ -197,6 +197,27 @@ function renderEnemies() {
     if (eHb) {
       ctx.fillStyle = "rgba(200, 80, 107, 0.35)";
       ctx.fillRect(eHb.x - camera.x, eHb.y - camera.y, eHb.w, eHb.h);
+    }
+
+    // 림 내려찍기(전용 phase, enemy.attack 미사용이라 위 telegraph/active 렌더를 안 탐):
+    //   - slamTele(기 모으기): 림 발밑 바닥을 가로질러 경고 띠가 진행도만큼 진해진다
+    //     ("점프해서 피하라" 신호 — 지면 접지 시 피격). 림 위로 충전 글로우.
+    //   - slamStrike(강타): 같은 띠를 밝게 번쩍("바닥 강타" 순간).
+    if (enemy.rimPhase === "slamTele" || enemy.rimPhase === "slamStrike") {
+      const cfg = enemy.ai.rim;
+      const surfaceY = floorSurfaceY(floorOf(enemy.y + enemy.h)); // 림이 선 층 표면 y
+      const bandH = 14;
+      if (enemy.rimPhase === "slamTele") {
+        const p = Math.min(1, (enemy.rimTele || 0) / cfg.telegraph); // 진행도 0~1
+        ctx.fillStyle = `rgba(255, 90, 90, ${0.12 + 0.33 * p})`;
+        ctx.fillRect(0 - camera.x, surfaceY - camera.y, stage.widthPx, bandH);
+        // 림 머리 위 충전 글로우(예고 강조).
+        ctx.fillStyle = `rgba(255, 120, 60, ${0.25 + 0.45 * p})`;
+        ctx.fillRect(edx - 4, edy - 10, enemy.w + 8, enemy.h + 14);
+      } else {
+        ctx.fillStyle = "rgba(255, 230, 120, 0.85)"; // 강타 번쩍
+        ctx.fillRect(0 - camera.x, surfaceY - camera.y - 6, stage.widthPx, bandH + 12);
+      }
     }
   }
 }

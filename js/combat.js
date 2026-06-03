@@ -244,6 +244,9 @@ function onParry(enemy) {
   if (enemy.attack && enemy.attack.dropsDaggerOnParry) {
     hittables.push(makeDroppedDagger(enemy.x + enemy.w / 2, enemy.y + enemy.h));
   }
+  // 패링 리스크(림 광역 강타 rimAoe): 패링은 성공하되 플레이어가 parryStun초 행동불가.
+  // 그로기 게이지 누적(아래)과 병행한다 — 막아도 페널티가 따르는 공격.
+  if (enemy.attack && enemy.attack.parryStun) player.staggerTime = enemy.attack.parryStun;
   // 그 외 공격: 패링으로 그로기 게이지를 그 공격의 가중치만큼 올린다(평타 +1,
   // 루포 블링크 등 +2). 최대치 이상이 되면(오버) addGroggyGauge가 그로기로 넣는다.
   addGroggyGauge(enemy, parryGroggyGain(enemy.attack));

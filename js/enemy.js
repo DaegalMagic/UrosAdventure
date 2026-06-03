@@ -187,6 +187,10 @@ function updateEnemies(dt) {
     // 대략 따라간다. 물리 패스(중력/충돌)는 아래에서 그대로 적용된다.
     if (enemy.role === "gabia") { updateGabia(enemy, dt); continue; }
 
+    // 림(스테이지4): 쿨 7초 패턴(내려찍기/광역 강타)을 일반 CHASE 위에 얹는다.
+    // true면 이번 프레임은 패턴이 전담(추격/평타 건너뜀), false면 일반 CHASE에 맡긴다.
+    if (enemy.role === "rim" && updateRimPatterns(enemy, dt)) continue;
+
     // CHASE: 행동 우선순위 — ① gap-closer 스페셜(거리 무관, 쿨+조건) →
     //        ② 사거리 안이면 공격(평타 또는 rangeReplace 스페셜) → ③ 추격 이동.
     const sp = enemy.ai.special;
@@ -462,4 +466,63 @@ function updateGabia(enemy, dt) {
     fireGabiaStone(enemy);
     enemy.stoneCd = randRange(cfg.stoneCdMin, cfg.stoneCdMax);
   }
+}
+
+// ---- 림(스테이지4 보스) — 추격/강타 패턴(내려찍기 / 광역 강타) ----
+// 일반 CHASE(추격+사거리 평타 rimSwing) 위에 쿨 7초 패턴을 얹는다. 반환 true면 이번
+// 프레임은 패턴이 전담(추격/평타 건너뜀), false면 일반 CHASE에 맡긴다.
+//   - 내려찍기(slam): 전용 phase(telegraph→strike)로 직접 처리한다. enemy.attack을 쓰지
+//     않으므로(패링 불가) 강타 순간 '점프 안 한 플레이어'에게 커스텀으로 피해+스턴을 준다.
+//   - 광역 강타(aoe): 일반 공격 rimAoe(긴 windup=기 모으기)로 위임 → FSM state="attack"가
+//     telegraph·active 판정·패링을 전담한다. 이 함수는 발동만 하고 한 프레임 true로 빠진다.
+function updateRimPatterns(enemy, dt) {
+  const cfg = enemy.ai.rim;
+  if (enemy.rimPatternCd == null) enemy.rimPatternCd = cfg.cooldown;
+
+  // 내려찍기 진행 중(전용 phase): 기 모으기 → 바닥 강타.
+  if (enemy.rimPhase === "slamTele") { rimUpdateSlamTele(enemy, dt, cfg); return true; }
+  if (enemy.rimPhase === "slamStrike") { rimUpdateSlamStrike(enemy, dt, cfg); return true; }
+
+  // idle: 쿨 감소 후, 쿨이 차고 바닥이면 둘 중 랜덤 발동(거리 무관 — telegraph가 회피 시간).
+  if (enemy.rimPatternCd > 0) enemy.rimPatternCd -= dt;
+  if (enemy.rimPatternCd <= 0 && enemy.onGround) {
+    enemy.rimPatternCd = cfg.cooldown; // 발동 시점부터 다음 패턴까지 쿨 7초
+    if (Math.random() < 0.5) {
+      // ① 내려찍기: 전용 phase 시작(제자리에서 기 모으기 — 추격 정지).
+      enemy.rimPhase = "slamTele";
+      enemy.rimTele = 0;
+      enemy.attackDir = enemy.facing; // 렌더 방향 일관성(판정은 arena-wide)
+    } else {
+      // ② 광역 강타: 일반 공격 파이프라인으로 위임(다음 프레임부터 FSM이 전담).
+      startEnemyAttack(enemy, "rimAoe");
+    }
+    return true;
+  }
+  return false; // 일반 CHASE(추격/평타)
+}
+
+// 내려찍기 기 모으기(telegraph): 제자리에서 cfg.telegraph초 모은 뒤 강타로 전이한다.
+function rimUpdateSlamTele(enemy, dt, cfg) {
+  enemy.rimTele += dt;
+  if (enemy.rimTele >= cfg.telegraph) {
+    enemy.rimPhase = "slamStrike";
+    enemy.rimStrike = 0;
+    enemy.rimSlamHit = false;
+  }
+}
+
+// 내려찍기 강타(strike): 첫 프레임에 '점프 안 하고 지면에 있는'(player.onGround)
+// 플레이어에게 dmg + 스턴(slamStun초 행동불가). 공중이면 안 맞음(점프로 회피).
+// 판정은 가로 무관(바닥 충격파) — 지면 접지 여부만 본다. slamActive초 뒤 idle 복귀.
+function rimUpdateSlamStrike(enemy, dt, cfg) {
+  if (!enemy.rimSlamHit) {
+    enemy.rimSlamHit = true;
+    ScreenShake.shake(SHOCKWAVE_SHAKE_MAG, SHOCKWAVE_SHAKE_TIME); // 바닥 강타 충격
+    if (player.onGround && !player.dead) {
+      damagePlayer(cfg.slamDamage);
+      player.staggerTime = cfg.slamStun; // 점프 안 한 페널티: 행동불가
+    }
+  }
+  enemy.rimStrike += dt;
+  if (enemy.rimStrike >= cfg.slamActive) enemy.rimPhase = "idle";
 }
