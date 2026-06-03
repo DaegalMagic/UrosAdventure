@@ -179,8 +179,13 @@ node tools/test.js stage3          # 패턴 일치 케이스만(파일명/suite�
 
 ## 9. 작업 순서 요약
 
-1. **Phase 0** 골격(harness + 러너 + `_load` 이관) — 가장 먼저, 토대
-2. **Phase 1** 공통 로직 케이스 — 보스와 무관한 토대 먼저 두텁게
-3. **Phase 2** 스테이지2 이관 + driver 은퇴
-4. **Phase 3** 스테이지1·3 신규 커버
+1. ✅ **Phase 0** 골격(harness + 러너 + `_load` 이관) — 가장 먼저, 토대
+2. ✅ **Phase 1** 공통 로직 케이스 — 보스와 무관한 토대 먼저 두텁게(`common.js` 18케이스)
+3. ✅ **Phase 2** 스테이지2 이관 + driver 은퇴(`stage2.js` 24케이스)
+4. ✅ **Phase 3** 스테이지1·3 신규 커버 — **완료**
+   - `stage1.js` 11케이스(배치/AI·힘겨루기·devour-ripple 3분기·폭주 chaseStep)
+   - `stage3.js` 43케이스(이프리트·가비아·나이아·실라 4보스 + 클리어 조건)
+   - harness EPILOGUE에 스테이지3 상태 게터 5종(firePillars/gabiaBlasts/naiaLasers/
+     naiaLaserQueue/naiaWave) 추가.
+   - 이로써 §2 목표 "공통 + 전 스테이지(1·2·3) 커버" 달성. 전체 **101통과/0실패/0보류**.
 5. AGENTS.md 갱신, (선택) pre-commit/CI 연결
