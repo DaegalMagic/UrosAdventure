@@ -373,8 +373,3 @@ function tileAt(stage, col, row) {
   }
   return stage.tiles[row][col];
 }
-
-// (col, row)가 solid인지. 스테이지 밖은 solid. 충돌 처리에서 사용.
-function isSolidAt(stage, col, row) {
-  return tileAt(stage, col, row).solid;
-}
