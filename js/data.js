@@ -245,6 +245,10 @@ const ENEMY_AI = {
   // 광폭화(비비 포식 시 lineEnraged=true): 발사 쿨이 enrageCdMult배 빨라지고, 라인이
   // 패링 불가가 되며(=봉인 불가) 빨갛게 바뀐다 — combat.js applyDevourRipple가 건다.
   kidian: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true, lineShooter: { cdMin: 5, cdMax: 7, damage: 2, telegraph: 1.0, fire: 0.15, parryCdBonus: 10, sealParries: 5, enrageCdMult: 3 } },
+  // 스테이지5(M.E.O.W 솔로전, 보상=새총). 0단계(맵+뼈대) 시점엔 AI 없는 정지형
+  // placeholder다 — 4층 높이 거대 보스의 좌우 이동·본체 패턴(전체공격/지진/전방/미사일)·
+  // 그로기15·드론 연동은 이후 단계에서 붙인다. SSOT: 메모리 stage5-meow-spec.md.
+  meow: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
   // ---- 스테이지3(실라/나이아/이프리트/가비아) ----
   // 0단계(맵+뼈대) 시점엔 넷 다 정지형 placeholder였다. 1단계에서 이프리트만 실제
   // 행동을 붙인다(가비아·실라·나이아는 아직 정지형 더미 — 이후 단계).

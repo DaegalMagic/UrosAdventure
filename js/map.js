@@ -209,6 +209,40 @@ function makeStage4() {
   return grid.map((row) => row.join(""));
 }
 
+// 스테이지 5(M.E.O.W 솔로전, 보상=새총). 사료스탕스/2/4와 같은 기본 4층 좌표
+// (DEFAULT_FLOOR_SURFACES_Y, 간격 80px)를 쓰지만, 발판이 '뚫린 구멍'으로만 층을
+// 오갈 수 있는 막힌 바닥(#)이라는 점이 다르다 — 핵심 메커닉인 '내려갈 때 좌우 위빙
+// 강제'를 위해서다. (= 원웨이라면 드롭스루로 아무 데서나 내려가 위빙이 강제되지 않음.)
+//   메인 층 표면 행: 4층 row13(y260) / 3층 row17(y340) / 2층 row21(y420) / 1층 row25(y500).
+// 구멍 배치(스펙: 2·4층 동일 위치, 3층 그 사이[엇갈림], 1층 막힘):
+//   - 2·4층 = 같은 x에 구멍 → 그 사이(3층 구멍은 어긋난 x) → 위빙(좌→우→좌) 강제.
+//   - 구멍은 3타일(60px). 플레이어 폭 45px가 온전히 빠질 수 있는 최소 폭(40px 구멍은
+//     양옆 솔리드에 걸쳐 안 떨어짐). 그래서 층당 2개·3타일 ≈ 8%로, 스펙의 5%에서
+//     통과성을 위해 상향했다(impl-plan: 구멍 개수/형태는 동선에 맞춰 조정 가능).
+// 보스(M.E.O.W)는 4층 전체 높이의 거대 보스라 한쪽 변(초기 우측)에 세운다 — main.js
+// startStage가 배치한다. 플레이어 스폰 P는 맨 위(4층) 왼쪽(보스 반대편, 구멍 아님).
+function makeStage5() {
+  const COLS = 75;
+  const ROWS = 30;
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill("."));
+  // 한 행을 솔리드(#)로 채운 뒤, 구멍 목록 [시작열, 길이]만 빈칸으로 뚫는다.
+  const floorWithHoles = (r, holes) => {
+    for (let c = 0; c < COLS; c++) grid[r][c] = "#";
+    for (const [hc, hlen] of holes) for (let i = 0; i < hlen && hc + i < COLS; i++) grid[r][hc + i] = ".";
+  };
+  // 2·4층 동일 위치 구멍 / 3층은 그 사이(엇갈림). (구멍 3타일씩 2개)
+  const HOLES_24 = [[20, 3], [46, 3]]; // 4층(row13)·2층(row21) 공통
+  const HOLES_3 = [[33, 3], [58, 3]]; // 3층(row17): 20~22과 46~48 사이/바깥으로 어긋남
+  floorWithHoles(13, HOLES_24); // 4층
+  floorWithHoles(17, HOLES_3); //  3층
+  floorWithHoles(21, HOLES_24); // 2층
+  // 1층 바닥: 막힌 바닥(구멍 없음). row25~29 꽉 찬 #(플레이어·보스가 안 빠지게).
+  for (let r = 25; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = "#";
+  // 플레이어 스폰: 4층(맨 위) 왼쪽, 보스(우측) 반대편. 4층 표면(row13) 바로 위 칸.
+  grid[12][3] = "P";
+  return grid.map((row) => row.join(""));
+}
+
 // ---- 가비아 HP 연동 동적 붕괴(스테이지3 전용) ----
 // 가비아 HP가 임계에 도달할 때마다(enemy.js updateGabia가 호출) 발판층(2~4층)의 가로
 // 칸을 무작위로 무너뜨린다(stage.tiles 칸 제거, 누적). 1층(바닥)은 절대 건드리지 않는다
@@ -272,11 +306,11 @@ function shuffleInPlace(arr) {
   return arr;
 }
 
-// 2~7번 맵(스테이지 2·3·4는 실제 맵, 5~7은 더미). 더미는 너비를 달리해 시각적으로 구분.
+// 2~7번 맵(스테이지 2·3·4·5는 실제 맵, 6~7은 더미). 더미는 너비를 달리해 시각적으로 구분.
 STAGES["스테이지 2"] = makeDayaStage();
 STAGES["스테이지 3"] = makeStage3();
 STAGES["스테이지 4"] = makeStage4();
-STAGES["스테이지 5"] = makeFlatStage(64, 30, 28);
+STAGES["스테이지 5"] = makeStage5();
 STAGES["스테이지 6"] = makeFlatStage(58, 30, 22);
 STAGES["스테이지 7"] = makeFlatStage(62, 30, 30);
 

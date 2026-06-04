@@ -305,6 +305,28 @@ function startStage(name) {
     const shady = makeEnemy(1100, 500, "shady", STAGE4_HP); // 셰이디: 1층 바닥 오른쪽
     enemies = [rim, shady];
     for (const e of enemies) e.group = enemies; // 서로(자기 포함) 참조(아공간 연동용)
+  } else if (name === "스테이지 5") {
+    // 스테이지5(M.E.O.W 솔로전, 보상=새총). 0단계(맵+뼈대)에선 AI 없는 정지형
+    // 더미(meow=stationary)다 — 드론·본체 4패턴·그로기15·처치 시퀀스(엘레나/아멜리아)는
+    // 이후 단계. M.E.O.W는 4층 전체 높이의 거대 보스라 한쪽 변(초기 우측)에 4층 높이로
+    // 세운다(size 오버라이드). 발 y=500(1층 바닥), 키 280px → 머리 y≈220(4층 표면 260
+    // 위까지). HP는 산정값 180(SOLO 220보다 약간 낮게 — 드론 막타 3뎀+그로기창 평타가 주 딜).
+    const STAGE5_HP = 180;
+    const meowW = 150; // 거대 보스 가로
+    const meowH = 280; // 4층 전체 높이(1층 발~4층 위)
+    const meowX = stage.widthPx - meowW / 2 - 5; // 맵 우측 끝에 붙여 세움
+    const meow = makeEnemy(meowX, 500, "meow", STAGE5_HP, 0, {
+      w: meowW,
+      h: meowH,
+      hurtW: meowW,
+      hurtH: meowH,
+    });
+    // 거대 보스 몸통(4층 높이)이 솔리드 발판(2·3·4층)과 겹쳐 충돌 해소가 위로 밀어
+    // 올리므로, 고정 위치로 떠 있게 한다(floating: 중력·세로충돌 면제). 좌우 이동(30초마다)도
+    // floating 상태에서 x만 옮기는 방식으로 붙인다(이후 단계). 피격은 floating과 무관히 가능.
+    meow.floating = true;
+    enemies = [meow];
+    for (const e of enemies) e.group = enemies; // 이후 드론/처치 연동용
   } else {
     enemies = [makeEnemy(510, 580)]; // 임시: 표적 적 하나(발 기준 좌표)
   }
