@@ -12,7 +12,7 @@ const path = require("path");
 const ROOT = path.resolve(__dirname, "..", "..");
 
 // index.html의 로드 순서(검증 대상이기도 하다). scenes.js가 SceneManager를 정의.
-const ORDER = ["data", "map", "camera", "input", "sprites", "effects", "combat", "main", "enemy", "render", "projectiles", "scenes"];
+const ORDER = ["data", "map", "camera", "input", "sprites", "effects", "combat", "main", "enemy", "render", "projectiles", "drones", "scenes"];
 const GAME_FILES = ORDER.map((n) => path.join("js", n + ".js"));
 
 function readGameSource(rel) {

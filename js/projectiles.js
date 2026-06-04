@@ -1138,6 +1138,7 @@ function updateProjectiles(dt) {
   updateNaiaWave(dt); // 진행 중 파도(주의표시→진행·다단히트·쿨 리셋)
   updateSila(dt); // 실라 화살 발사 결정(쿨)
   updateSilaMobs(dt); // 화살 착탄 잡몹 근접 폭발
+  updateDroneSpawner(dt); // 스테이지5 드론 출몰(4초마다 우변, 본체 생존 시) — drones.js
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
@@ -1145,6 +1146,7 @@ function updateProjectiles(dt) {
     else if (p.kind === "rainDrop") updateRainDrop(p, dt);
     else if (p.kind === "stone") updateStone(p, dt);
     else if (p.kind === "arrow") updateArrow(p, dt);
+    else if (p.kind === "droneBullet") updateDroneBullet(p, dt); // 스테이지5 드론 탄 — drones.js
     else updateSimpleProjectile(p, dt);
   }
   projectiles = projectiles.filter((p) => p.alive);
@@ -1163,6 +1165,8 @@ function renderProjectiles() {
       else if (p.state === "returning") color = "#ffd166"; // 다야로: 금빛
     } else if (p.kind === "dayaShot") {
       color = p.state === "reflected" ? "#ffe066" : "#c77bff"; // 반사=금빛, 조준=다야 보라
+    } else if (p.kind === "droneBullet") {
+      color = p.state === "reflected" ? "#ffe066" : "#ff6b6b"; // 반사=금빛, 조준=드론 적색
     }
     ctx.save();
     ctx.translate(projCenterX(p) - camera.x, projCenterY(p) - camera.y);

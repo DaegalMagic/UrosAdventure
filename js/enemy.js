@@ -113,6 +113,11 @@ function updateEnemies(dt) {
     const enemyCx = enemy.x + enemy.w / 2;
     enemy.facing = playerCx >= enemyCx ? 1 : -1;
 
+    // 스테이지5 드론: 일반 FSM/그로기 처리를 타지 않고 updateDrone이 모든 상태(추격/
+    // 낙하그로기/막타발사)를 전담한다. 세로 물리(낙하)는 아래 물리 패스가 floating
+    // 여부로 처리한다(추격·발사 드론=floating 면제, HP1 낙하 드론=중력 적용). drones.js.
+    if (enemy.role === "drone") { updateDrone(enemy, dt); continue; }
+
     // 영구 그로기: 타이머 없이 계속 무방비. 공격/이동 로직을 돌리지 않는다(포식 대기).
     if (enemy.permaGroggy) continue;
 

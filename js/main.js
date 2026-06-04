@@ -238,6 +238,7 @@ function startStage(name) {
   player = makePlayer(stage);
   hittables = []; // 기본은 비움(스테이지 2 분기에서 떨군 단검을 채운다)
   resetProjectiles(); // 투사체/시차 발사 대기열 초기화(projectiles.js)
+  resetDrones(); // 스테이지5 드론 출몰 주기 초기화(drones.js — 비-스테이지5에선 무해)
   // 사료스탕스(1번)는 베니/루포/티그 3인 동시전이라 셋을 가운데 땅 위에 세우고
   // 서로를 group으로 묶어 연동(포식/힘겨루기)이 형제들에게 전파되게 한다.
   // 그 외 스테이지는 아직 임시 표적 적 하나(보스 로직은 스테이지별로 이후 추가).

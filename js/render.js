@@ -45,11 +45,13 @@ function renderGoal() {
 
 // 적 상태별 색(무방비/위험 상태를 눈으로 구분). 우선순위가 높은 상태부터.
 function enemyColor(enemy) {
+  if (enemy.launched) return "#ff7b3c"; // 막타로 발사된 드론: 본체로 날아가는 주황
   if (enemy.ifritPhase === "transform") return "#ff6a00"; // 이프리트 거대 불꽃 변신: 주황불꽃(무적)
   if (enemy.invincible) return "#9aa0a6"; // 무적 폭주: 회색(때려도 안 죽음)
   if (enemy.berserk) return "#ff5a3c"; // 폭주: 강렬한 주황빨강
-  if (enemy.permaGroggy) return "#b08968"; // 영구 그로기: 흙빛(포식 대기)
+  if (enemy.permaGroggy) return "#b08968"; // 영구 그로기: 흙빛(포식 대기/드론 낙하)
   if (enemy.groggyTime > 0) return "#e8c547"; // 그로기: 노란빛
+  if (enemy.role === "drone") return "#7fb0c8"; // 드론 평소: 금속 청록
   return "#c8506b"; // 평소: 붉은색
 }
 
@@ -92,7 +94,7 @@ function renderEnemies() {
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아", silaMob: "잡몹", rim: "림", shady: "셰이디" }[enemy.role];
+        const label = { benny: "베니", lupo: "루포", tig: "티그", daya: "다야", bibi: "비비", kidian: "키디언", ifrit: "이프리트", gabia: "가비아", sila: "실라", naia: "나이아", silaMob: "잡몹", rim: "림", shady: "셰이디", meow: "M.E.O.W", drone: "드론" }[enemy.role];
         if (label) ctx.fillText(label, edx + enemy.w / 2, edy + enemy.h / 2);
       }
     }

@@ -104,3 +104,162 @@ suite("스테이지5 · 맵/스폰 뼈대", (t) => {
     expect(alive()).toBeTruthy(); // 사망 → 클리어
   });
 });
+
+// ── 1단계: 드론 시스템 ───────────────────────────────────────────────────────
+// 드론 = 이 스테이지 핵심 메커니즘. 출몰(4s 우변)→궤도이동(200px·240px/s)→탄(3s)→
+// 탄패링(쏜 드론에 1뎀)→HP1 낙하→막타 발사→본체 명중(3뎀+그로기3). SSOT [[stage5-meow-spec]].
+suite("스테이지5 · 드론", (t) => {
+  // 출몰: M.E.O.W 생존 중 4초마다 화면 우변에서 드론 1기(비행체). 4초 전엔 없다.
+  t.test("출몰: 4초마다 우변에서 드론 1기(floating)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0.5"); // 출몰 y 결정적
+    g.update(240); // 3.84s < 4s → 아직 없음
+    expect(g.enemies.filter((e) => e.role === "drone").length).toBe(0);
+    g.update(40); // 누적 4.48s → 정확히 1기 출몰(다음은 8s)
+    const drones = g.enemies.filter((e) => e.role === "drone");
+    expect(drones.length).toBe(1);
+    expect(drones[0].floating).toBeTruthy(); // 비행체(중력·세로충돌 면제)
+    expect(drones[0].x + drones[0].w / 2).toBeGreaterThan(g.stage.widthPx / 2); // 우변에서
+    expect(drones[0].hp).toBe(g.eval("DRONE_HP")); // HP 5
+  });
+
+  // 이동: 목표점으로 DRONE_SPEED(=MOVE_SPEED×1.2=240px/s)로 다가간다. 리타깃을 멀리
+  // 미뤄 한 프레임 변위가 정확히 240×dt인지 본다(목표를 멀리 둬 클램프 미적용).
+  t.test("이동: 목표점으로 240px/s(=플레이어×1.2)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    d.x = 700; d.y = 300; d.droneRetarget = 999; // 리타깃 막기
+    d.droneTx = 5000; d.droneTy = d.y + d.h / 2; // 멀리(순수 +x 방향)
+    const x0 = d.x, y0 = d.y;
+    g.update(1, 0.016);
+    const mag = Math.hypot(d.x - x0, d.y - y0);
+    expect(mag).toBeCloseTo(g.eval("DRONE_SPEED") * 0.016, 0.05); // 240×0.016 = 3.84
+  });
+
+  // 탄: 플레이어를 맞히면 dmg 1(패링 안 하면).
+  t.test("탄: 플레이어 명중 시 dmg 1", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    const p = g.player;
+    const hp0 = p.hp;
+    g.fireDroneBullet(d);
+    const b = g.projectiles.find((pr) => pr.kind === "droneBullet");
+    expect(b).toBeTruthy();
+    b.x = p.x + p.w / 2; b.y = p.y + p.h / 2; // 플레이어 위
+    p.attack = null; // 패링 자세 없음
+    g.updateDroneBullet(b, 0.016);
+    expect(p.hp).toBe(hp0 - 1);
+    expect(b.alive).toBeFalsy();
+  });
+
+  // 탄 패링: 패링하면 탄이 '쏜 드론'을 역호밍 → 명중 시 그 드론에 1뎀.
+  t.test("탄 패링: 쏜 드론으로 되돌아가 1뎀", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    d.x = 800; d.y = 300;
+    const p = g.player;
+    p.x = 400; p.y = 300;
+    g.fireDroneBullet(d);
+    const b = g.projectiles.find((pr) => pr.kind === "droneBullet");
+    // 플레이어 공격 히트박스 안에 탄을 두고 패링 → 반사 전환.
+    p.attack = g.eval("ATTACKS").playerSlash; p.attackElapsed = 0.05; p.attackDir = 1;
+    const atk = g.getAttackHitbox();
+    b.x = atk.x + 10; b.y = atk.y + 10;
+    g.updateDroneBullet(b, 0.016);
+    expect(b.state).toBe("reflected");
+    // 반사탄을 드론 위로 옮겨 한 프레임 더 → 그 드론에 1뎀.
+    b.x = d.x + d.w / 2; b.y = d.y + d.h / 2;
+    const hp0 = d.hp;
+    g.updateDroneBullet(b, 0.016);
+    expect(d.hp).toBe(hp0 - 1);
+    expect(b.alive).toBeFalsy();
+  });
+
+  // HP 1: 그로기 + 바닥 낙하(영구 그로기·floating 해제 → 중력으로 떨어짐, 공격 중단).
+  t.test("HP 1: 그로기 + 바닥 낙하(중력 적용)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    d.x = 400; d.y = 100; // 맵 중앙 빈 공간(추격 끝 위치 — 우변 벽 임베드 회피)
+    d.hp = 2;
+    g.hitEnemy(d, 1); // 2→1 → 낙하 진입
+    expect(d.hp).toBe(1);
+    expect(d.droneFell).toBeTruthy();
+    expect(d.permaGroggy).toBeTruthy();
+    expect(d.floating).toBeFalsy(); // 중력 적용
+    expect(d.alive).toBeTruthy(); // 아직 안 죽음(막타 대기)
+    const y0 = d.y;
+    g.update(10); // 물리 패스가 떨군다
+    expect(d.y).toBeGreaterThan(y0);
+  });
+
+  // 막타: 죽는 마지막 타격 → 죽는 대신 '플레이어가 보는 방향'으로 발사된다.
+  t.test("막타: facing 방향으로 발사(죽지 않고 발사체 전환)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    d.hp = 1; g.droneFall(d);
+    g.player.facing = 1; // 오른쪽
+    g.hitEnemy(d, 1); // 막타(그로기 1.5뎀 → hp≤0)
+    expect(d.launched).toBeTruthy();
+    expect(d.alive).toBeTruthy(); // 죽지 않고 발사체로
+    expect(d.launchVx).toBeGreaterThan(0); // 오른쪽으로
+    // 왼쪽을 보면 왼쪽으로 발사된다(대조).
+    const g2 = loadGame();
+    g2.startStage("스테이지 5");
+    g2.eval("Math.random=()=>0");
+    g2.spawnDrone();
+    const d2 = g2.enemies.find((e) => e.role === "drone");
+    d2.hp = 1; g2.droneFall(d2);
+    g2.player.facing = -1;
+    g2.hitEnemy(d2, 1);
+    expect(d2.launchVx).toBeLessThan(0);
+  });
+
+  // 발사 드론이 본체에 명중 → 본체에 데미지 3 + 그로기 게이지 3 적립(P2에서 15로 수렴).
+  t.test("막타 발사 → 본체 명중: 데미지 3 + 그로기 3", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    const meow = g.bossOf("meow");
+    const hp0 = meow.hp, gauge0 = meow.groggyGauge;
+    d.hp = 0; g.player.facing = 1; g.launchDrone(d);
+    const mhb = g.getHurtbox(meow);
+    d.x = mhb.x + 5; d.y = mhb.y + 5; d.launchVx = 0; d.launchVy = 0; // 본체 위에 겹쳐 정지
+    g.update(1);
+    expect(meow.hp).toBe(hp0 - 3); // 데미지 3
+    expect(meow.groggyGauge).toBe(gauge0 + 3); // 그로기 게이지 3 적립
+    expect(d.alive).toBeFalsy(); // 본체에 꽂히고 소멸
+  });
+
+  // 발사 드론은 더는 피격 대상이 아니다(재발사/중복 처리 방지).
+  t.test("발사된 드론은 피격 무시(재발사 방지)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0");
+    g.spawnDrone();
+    const d = g.enemies.find((e) => e.role === "drone");
+    d.hp = 0; g.player.facing = 1; g.launchDrone(d);
+    const vx0 = d.launchVx;
+    g.player.facing = -1; // 방향을 바꿔도
+    g.hitEnemy(d, 1); // 다시 때려도 무시 → 재발사/방향전환 없음
+    expect(d.launchVx).toBe(vx0);
+    expect(d.alive).toBeTruthy();
+  });
+});

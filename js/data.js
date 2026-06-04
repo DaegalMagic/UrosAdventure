@@ -249,6 +249,9 @@ const ENEMY_AI = {
   // placeholder다 — 4층 높이 거대 보스의 좌우 이동·본체 패턴(전체공격/지진/전방/미사일)·
   // 그로기15·드론 연동은 이후 단계에서 붙인다. SSOT: 메모리 stage5-meow-spec.md.
   meow: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 스테이지5 드론: 출몰/추격/탄/막타발사 수치는 drones.js 상수로 관리한다. 여기선 일반
+  // FSM을 타지 않는 placeholder만 둔다(updateEnemies가 role==="drone"을 updateDrone에 위임).
+  drone: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0 },
   // ---- 스테이지3(실라/나이아/이프리트/가비아) ----
   // 0단계(맵+뼈대) 시점엔 넷 다 정지형 placeholder였다. 1단계에서 이프리트만 실제
   // 행동을 붙인다(가비아·실라·나이아는 아직 정지형 더미 — 이후 단계).

@@ -44,6 +44,7 @@ function resolveAttackHits() {
 // 방어력 배수(1 - defense)도 곱한다: defense=1이면 무피해, 음수면 증폭. defense를
 // 1로 클램프해 배수가 음수(=피해가 회복으로 뒤집힘)가 되는 일을 막는다.
 function hitEnemy(enemy, amount = PLAYER_ATTACK_DAMAGE, isDevour = false) {
+  if (enemy.launched) return; // 막타로 발사된 드론: 더는 피격 대상 아님(재발사 방지)
   if (enemy.invincible) return; // 무적: 피해 무시(타격감 연출도 생략)
   // 가비아 3번째 시전 무적(gInvinc): 때리면 무적이 즉시 해제되고 공격자(플레이어)가
   // gStagger초 경직된다(피해는 0). projectiles.js castGabiaInvinc가 걸어 둔다.
@@ -82,6 +83,9 @@ function hitEnemy(enemy, amount = PLAYER_ATTACK_DAMAGE, isDevour = false) {
   // 스테이지4 아공간(림/셰이디): HP가 5% 이하로 떨어지면 죽지 않고 아공간으로 피신한다
   // (둘 다 생존 중일 때만 — 상대가 죽었으면 봉인되어 아래 사망 처리로 빠진다).
   if (maybeEnterSubspace(enemy)) return;
+  // 스테이지5 드론: HP 1이면 그로기+낙하, 0 이하(막타)면 죽는 대신 facing으로 발사된다
+  // (drones.js handleDroneDamage). true면 기본 사망 처리를 건너뛴다.
+  if (enemy.role === "drone" && handleDroneDamage(enemy)) return;
   // 평타/일반 공격으로 HP가 0이 되면 그냥 사망한다(포식은 위 전용 입력으로만 일어난다).
   if (enemy.hp <= 0) enemy.alive = false;
 }
