@@ -77,6 +77,7 @@ let naiaLaserQueue = []; // 시차 발사 대기열(볼리): { delay, shooter, a
 let naiaWave = null; // 나이아 파도(동시 1개): { shooter, phase("warn"|"active"), t, x, w, speed, ... } | null
 let shadyWeapons = []; // 셰이디 차원문 난사 완주 시 낙하하는 거대 무기: { x, y, w, h, vy, damage, hitPlayer, alive }
 let meowAoes = []; // 스테이지5 M.E.O.W ①전체공격/②지진(패링 불가): { type("band"|"quake"), half, state, t, hit, alive }
+let meowSeq = { phase: "boss" }; // 처치 시퀀스: boss→elena→amelia→done(M.E.O.W 사망 후 포식 연쇄)
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -92,6 +93,7 @@ function resetProjectiles() {
   naiaWave = null;
   shadyWeapons = [];
   meowAoes = [];
+  meowSeq = { phase: "boss" }; // 스테이지5 처치 시퀀스 초기화(다른 스테이지선 meow 없어 무동작)
 }
 
 // 점(px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리. 나이아 레이저(회전된 띠) 판정용.
@@ -1364,6 +1366,39 @@ function renderMeowAoes() {
   }
 }
 
+// ---- 스테이지5 처치 시퀀스(M.E.O.W → 엘레나 → 아멜리아) ----
+// M.E.O.W 사망 → 맵 중앙에 엘레나(포식 1방) 등장 → 포식되면 아멜리아(포식 1방) → 포식
+// 되면 전멸 성립(StageScene가 enemies.every(!alive)로 클리어 판정 → 보상 새총). 매 프레임
+// updateProjectiles에서 호출하므로 M.E.O.W가 죽은 그 프레임 안에 엘레나가 들어서서
+// '본체 사망=곧장 클리어'가 되지 않는다(전멸 판정은 update 이후라 후계자가 먼저 선다).
+//   엘레나/아멜리아는 permaGroggy로 세워 '그로기 무관 즉시 포식'(combat.js devourEnemy)이
+//   되게 한다. 어떻게 죽든(포식/평타) !alive면 다음 단계로 넘어간다. SSOT [[stage5-meow-spec]].
+function updateMeowSequence(dt) {
+  const meow = enemies.find((e) => e.role === "meow");
+  if (!meow) return; // 스테이지5가 아니거나 enemies에 본체가 없음 → 무동작
+  if (meowSeq.phase === "boss") {
+    if (!meow.alive) { spawnMeowHeir("elena"); meowSeq.phase = "elena"; }
+  } else if (meowSeq.phase === "elena") {
+    const elena = enemies.find((e) => e.role === "elena");
+    if (!elena || !elena.alive) { spawnMeowHeir("amelia"); meowSeq.phase = "amelia"; }
+  } else if (meowSeq.phase === "amelia") {
+    const amelia = enemies.find((e) => e.role === "amelia");
+    if (!amelia || !amelia.alive) meowSeq.phase = "done"; // 전멸 → StageScene가 클리어 처리
+  }
+}
+
+// 후계자(엘레나/아멜리아) 한 기를 맵 중앙 1층 바닥에 세운다. HP 1·permaGroggy라 포식
+// 한 방(또는 그로기 평타)으로 즉시 처치된다. group은 enemies(연동 없음 — devour ripple은
+// 이 role들을 건드리지 않는다).
+function spawnMeowHeir(role) {
+  const footX = stage.widthPx / 2;
+  const footY = stage.floorSurfaces[stage.floorSurfaces.length - 1]; // 1층 바닥(=500)
+  const heir = makeEnemy(footX, footY, role, 1);
+  heir.permaGroggy = true; // 무방비(즉시 포식 대상) + AI 정지
+  heir.group = enemies;
+  enemies.push(heir); // 루프 밖(updateProjectiles)에서 추가 — 다음 프레임부터 반영
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
   updateShadyWeapons(dt);
@@ -1385,6 +1420,7 @@ function updateProjectiles(dt) {
   updateSilaMobs(dt); // 화살 착탄 잡몹 근접 폭발
   updateDroneSpawner(dt); // 스테이지5 드론 출몰(4초마다 우변, 본체 생존 시) — drones.js
   updateMeowPatterns(dt); // 스테이지5 M.E.O.W 본체(좌우 이동 + ①②③④)
+  updateMeowSequence(dt); // 스테이지5 처치 시퀀스(본체 사망 → 엘레나 → 아멜리아)
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);

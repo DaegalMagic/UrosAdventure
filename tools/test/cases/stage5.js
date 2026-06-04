@@ -484,3 +484,79 @@ suite("스테이지5 · 본체 패턴", (t) => {
     expect(meow.x).toBe(x0); // 이동도 정지
   });
 });
+
+// ── 3단계: 처치 시퀀스(M.E.O.W → 엘레나 → 아멜리아) ──────────────────────────
+// 본체 사망 → 중앙 엘레나(포식 1방) → 포식 시 아멜리아(포식 1방) → 포식 시 전멸 성립
+// (StageScene가 enemies.every(!alive)로 클리어 판정 → 보상 새총). SSOT [[stage5-meow-spec]].
+suite("스테이지5 · 처치 시퀀스", (t) => {
+  t.test("본체 사망 → 중앙에 엘레나(permaGroggy·HP1)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    expect(g.meowSeq.phase).toBe("boss");
+    const meow = g.bossOf("meow");
+    meow.alive = false; // 본체 처치
+    g.updateMeowSequence(0.016);
+    const elena = g.bossOf("elena");
+    expect(elena).toBeTruthy();
+    expect(elena.alive).toBeTruthy();
+    expect(elena.permaGroggy).toBeTruthy(); // 그로기 무관 즉시 포식 대상
+    expect(elena.hp).toBe(1);
+    expect(elena.x + elena.w / 2).toBeCloseTo(g.stage.widthPx / 2, 1); // 맵 중앙
+    expect(g.meowSeq.phase).toBe("elena");
+  });
+
+  // 본체 사망 프레임에 엘레나가 들어서므로 '본체 사망=곧장 전멸'이 되지 않는다.
+  t.test("본체 사망 프레임에 후계자가 서서 즉시 클리어 안 됨", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.bossOf("meow").alive = false;
+    g.updateMeowSequence(0.016);
+    expect(g.enemies.every((e) => !e.alive)).toBeFalsy(); // 엘레나 생존 → 미클리어
+  });
+
+  // 포식 1방: permaGroggy 후계자는 devour 공격(S)으로 HP 무관 즉시 처치된다.
+  t.test("포식 1방: permaGroggy 엘레나는 devour로 즉사", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.bossOf("meow").alive = false;
+    g.updateMeowSequence(0.016);
+    const elena = g.bossOf("elena");
+    g.hitEnemy(elena, 1, true); // isDevour=true + permaGroggy → 즉시 포식
+    expect(elena.alive).toBeFalsy();
+  });
+
+  t.test("엘레나 포식 → 아멜리아 등장", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.bossOf("meow").alive = false;
+    g.updateMeowSequence(0.016); // → 엘레나
+    const elena = g.bossOf("elena");
+    g.hitEnemy(elena, 1, true); // 포식
+    g.updateMeowSequence(0.016); // → 아멜리아
+    const amelia = g.bossOf("amelia");
+    expect(amelia).toBeTruthy();
+    expect(amelia.alive).toBeTruthy();
+    expect(amelia.permaGroggy).toBeTruthy();
+    expect(g.meowSeq.phase).toBe("amelia");
+  });
+
+  t.test("아멜리아 포식 → done + 전멸 성립(클리어)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.bossOf("meow").alive = false;
+    g.updateMeowSequence(0.016); // 엘레나
+    g.hitEnemy(g.bossOf("elena"), 1, true);
+    g.updateMeowSequence(0.016); // 아멜리아
+    g.hitEnemy(g.bossOf("amelia"), 1, true);
+    g.updateMeowSequence(0.016); // done
+    expect(g.meowSeq.phase).toBe("done");
+    expect(g.enemies.every((e) => !e.alive)).toBeTruthy(); // 전멸 → 클리어(보상 새총)
+  });
+
+  // 보상 매핑(데이터): 스테이지5 클리어 보물 = 새총.
+  t.test("보상: 스테이지5 보물 = 새총", () => {
+    const g = loadGame();
+    const sel = g.eval("SELECT_STAGES").find((s) => s.id === "스테이지 5");
+    expect(sel.treasure).toBe("새총");
+  });
+});
