@@ -111,8 +111,11 @@ function updateShields(dt) {
 }
 
 // 포식(devour): 그로기 상태의 적을 마무리하고 3인 연동을 일으킨다.
+// devoured 표식은 '평타로 죽었는지 포식으로 죽었는지'를 가려야 하는 곳에서 본다
+// (스테이지5 처치 시퀀스: 엘레나를 포식하면 아멜리아로 잇고, 평타로 죽이면 즉시 클리어).
 function devourEnemy(target) {
   target.alive = false;
+  target.devoured = true;
   applyDevourRipple(target);
 }
 

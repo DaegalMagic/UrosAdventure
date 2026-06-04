@@ -1367,12 +1367,14 @@ function renderMeowAoes() {
 }
 
 // ---- 스테이지5 처치 시퀀스(M.E.O.W → 엘레나 → 아멜리아) ----
-// M.E.O.W 사망 → 맵 중앙에 엘레나(포식 1방) 등장 → 포식되면 아멜리아(포식 1방) → 포식
-// 되면 전멸 성립(StageScene가 enemies.every(!alive)로 클리어 판정 → 보상 새총). 매 프레임
-// updateProjectiles에서 호출하므로 M.E.O.W가 죽은 그 프레임 안에 엘레나가 들어서서
-// '본체 사망=곧장 클리어'가 되지 않는다(전멸 판정은 update 이후라 후계자가 먼저 선다).
-//   엘레나/아멜리아는 permaGroggy로 세워 '그로기 무관 즉시 포식'(combat.js devourEnemy)이
-//   되게 한다. 어떻게 죽든(포식/평타) !alive면 다음 단계로 넘어간다. SSOT [[stage5-meow-spec]].
+// M.E.O.W 사망 → 맵 중앙에 엘레나 등장. 매 프레임 updateProjectiles에서 호출하므로 본체가
+// 죽은 그 프레임 안에 엘레나가 들어서서 '본체 사망=곧장 클리어'가 되지 않는다(전멸 판정은
+// update 이후라 후계자가 먼저 선다).
+//   엘레나/아멜리아는 permaGroggy로 세워 '그로기 무관 즉시 포식'(combat.js devourEnemy) 대상.
+//   엘레나 처치 방식으로 분기한다:
+//     · 포식(S, devoured) → 아멜리아 등장 → 아멜리아 처치 시 전멸(정규 포식 연쇄).
+//     · 평타(비포식)로 죽임 → 아멜리아 없이 즉시 전멸(클리어). 포식 미해금/생략 시 탈출로.
+//   전멸 판정은 StageScene의 enemies.every(!alive). 클리어 보상=새총. SSOT [[stage5-meow-spec]].
 function updateMeowSequence(dt) {
   const meow = enemies.find((e) => e.role === "meow");
   if (!meow) return; // 스테이지5가 아니거나 enemies에 본체가 없음 → 무동작
@@ -1380,7 +1382,11 @@ function updateMeowSequence(dt) {
     if (!meow.alive) { spawnMeowHeir("elena"); meowSeq.phase = "elena"; }
   } else if (meowSeq.phase === "elena") {
     const elena = enemies.find((e) => e.role === "elena");
-    if (!elena || !elena.alive) { spawnMeowHeir("amelia"); meowSeq.phase = "amelia"; }
+    if (!elena || !elena.alive) {
+      // 포식으로 죽였으면 아멜리아로 잇고, 평타로 죽였으면 아멜리아 없이 즉시 클리어.
+      if (elena && elena.devoured) { spawnMeowHeir("amelia"); meowSeq.phase = "amelia"; }
+      else meowSeq.phase = "done"; // 평타 처치 → 전멸(엘레나만 죽으면 전멸 성립)
+    }
   } else if (meowSeq.phase === "amelia") {
     const amelia = enemies.find((e) => e.role === "amelia");
     if (!amelia || !amelia.alive) meowSeq.phase = "done"; // 전멸 → StageScene가 클리어 처리

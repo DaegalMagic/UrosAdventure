@@ -525,19 +525,36 @@ suite("스테이지5 · 처치 시퀀스", (t) => {
     expect(elena.alive).toBeFalsy();
   });
 
-  t.test("엘레나 포식 → 아멜리아 등장", () => {
+  t.test("엘레나 포식(S) → 아멜리아 등장(정규 연쇄)", () => {
     const g = loadGame();
     g.startStage("스테이지 5");
     g.bossOf("meow").alive = false;
     g.updateMeowSequence(0.016); // → 엘레나
     const elena = g.bossOf("elena");
-    g.hitEnemy(elena, 1, true); // 포식
+    g.hitEnemy(elena, 1, true); // 포식(devour)
+    expect(elena.devoured).toBeTruthy();
     g.updateMeowSequence(0.016); // → 아멜리아
     const amelia = g.bossOf("amelia");
     expect(amelia).toBeTruthy();
     expect(amelia.alive).toBeTruthy();
     expect(amelia.permaGroggy).toBeTruthy();
     expect(g.meowSeq.phase).toBe("amelia");
+  });
+
+  // 분기: 포식 안 하고 평타로 엘레나를 죽이면 아멜리아 없이 곧장 전멸(즉시 클리어).
+  t.test("엘레나 평타(비포식) 처치 → 아멜리아 없이 즉시 클리어", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.bossOf("meow").alive = false;
+    g.updateMeowSequence(0.016); // → 엘레나
+    const elena = g.bossOf("elena");
+    g.hitEnemy(elena, 1, false); // 평타(비포식) — permaGroggy라 1.5뎀 즉사
+    expect(elena.alive).toBeFalsy();
+    expect(elena.devoured).toBeFalsy(); // 포식 아님
+    g.updateMeowSequence(0.016);
+    expect(g.bossOf("amelia")).toBeFalsy(); // 아멜리아 미등장
+    expect(g.meowSeq.phase).toBe("done");
+    expect(g.enemies.every((e) => !e.alive)).toBeTruthy(); // 즉시 클리어(보상 새총)
   });
 
   t.test("아멜리아 포식 → done + 전멸 성립(클리어)", () => {
