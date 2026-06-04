@@ -326,6 +326,9 @@ function startStage(name) {
     // 올리므로, 고정 위치로 떠 있게 한다(floating: 중력·세로충돌 면제). 좌우 이동(30초마다)도
     // floating 상태에서 x만 옮기는 방식으로 붙인다(이후 단계). 피격은 floating과 무관히 가능.
     meow.floating = true;
+    // 그로기 게이지 15 오버라이드(글로벌 3): 드론 막타 1대=3 → 5대면 15, 또는 ③④ 패링
+    // 각 +1 누적으로 15 도달 시 5초 그로기(GROGGY_TIME) → 평타로 마무리. combat.js addGroggyGauge.
+    meow.groggyGaugeMax = 15;
     enemies = [meow];
     for (const e of enemies) e.group = enemies; // 이후 드론/처치 연동용
   } else {

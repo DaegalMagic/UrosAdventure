@@ -76,6 +76,7 @@ let naiaLasers = []; // 나이아 레이저: { ox, oy, ex, ey, state, t, shooter
 let naiaLaserQueue = []; // 시차 발사 대기열(볼리): { delay, shooter, aimPlayer }
 let naiaWave = null; // 나이아 파도(동시 1개): { shooter, phase("warn"|"active"), t, x, w, speed, ... } | null
 let shadyWeapons = []; // 셰이디 차원문 난사 완주 시 낙하하는 거대 무기: { x, y, w, h, vy, damage, hitPlayer, alive }
+let meowAoes = []; // 스테이지5 M.E.O.W ①전체공격/②지진(패링 불가): { type("band"|"quake"), half, state, t, hit, alive }
 
 // startStage에서 호출(스테이지 새로 구성 시 잔재 제거).
 function resetProjectiles() {
@@ -90,6 +91,7 @@ function resetProjectiles() {
   naiaLaserQueue = [];
   naiaWave = null;
   shadyWeapons = [];
+  meowAoes = [];
 }
 
 // 점(px,py)에서 선분 (ax,ay)-(bx,by)까지의 최단 거리. 나이아 레이저(회전된 띠) 판정용.
@@ -1119,6 +1121,249 @@ function renderShadyWeapons() {
   }
 }
 
+// ---- 스테이지5 M.E.O.W 본체 패턴 ----
+// M.E.O.W는 4층 높이 거대 보스라 일반 CHASE FSM(updateEnemies)을 타지 않고(stationary),
+// 정지형 다야(updateDayaPatterns)처럼 여기서 좌우 이동 + 4패턴을 전담한다. 수치는
+// 데이터(ai.meow)에서 읽는다. SSOT: 메모리 stage5-meow-spec.md.
+//   - 좌우 이동: moveInterval(30s)마다 '다음 패턴 슬롯'을 좌↔우 이동으로 대체한다
+//     (이동 전용 타이머가 아니라 ①/② 발동 슬롯 하나를 이동으로 소비).
+//   - 슬롯 쿨 slotCooldown(8s)마다 ①전체공격/②지진 중 랜덤(둘 다 패링 불가, updateMeowAoes).
+//   - 평타 ③/④(basicCooldown마다, 플레이어 위치 기반, 둘 다 패링 가능): 근거리·비상공 →
+//     ③ 전방 클로(meowClaw), 상공/원거리 → ④ 미사일 missileCount발(meowMissile).
+function updateMeowPatterns(dt) {
+  updateMeowAoes(dt); // 진행 중 ①②는 그로기/사망과 무관하게 끝까지 처리
+  const meow = enemies.find((e) => e.role === "meow" && e.alive);
+  if (!meow) return;
+  if (meow.permaGroggy || meow.groggyTime > 0) return; // 그로기 중엔 새 패턴/이동 없음
+  const cfg = meow.ai.meow;
+  if (meow.meowSlotCd == null) {
+    meow.meowSlotCd = cfg.slotCooldown; // ①/② 발동 슬롯 쿨
+    meow.meowBasicCd = cfg.basicCooldown; // ③/④ 평타 쿨
+    meow.meowMoveTimer = 0; // 좌우 이동 누적 타이머(slotCooldown 슬롯에서 소비)
+    meow.meowSide = meow.x + meow.w / 2 < stage.widthPx / 2 ? -1 : 1; // 현재 변(-1 왼/+1 오른)
+  }
+
+  // 좌우 이동 타이머 누적. 슬롯이 찼을 때 이동이 밀려 있으면 이동으로 슬롯을 소비하고,
+  // 아니면 ①/② 중 랜덤을 발동한다(둘 다 같은 8s 슬롯을 쓴다).
+  meow.meowMoveTimer += dt;
+  meow.meowSlotCd -= dt;
+  if (meow.meowSlotCd <= 0) {
+    if (meow.meowMoveTimer >= cfg.moveInterval) {
+      meowMoveSides(meow);
+      meow.meowMoveTimer = 0;
+    } else if (Math.random() < 0.5) {
+      spawnMeowBand(meow);
+    } else {
+      spawnMeowQuake(meow);
+    }
+    meow.meowSlotCd = cfg.slotCooldown;
+  }
+
+  // ③/④ 평타: 플레이어 위치로 분기.
+  meow.meowBasicCd -= dt;
+  if (meow.meowBasicCd <= 0) {
+    fireMeowBasic(meow);
+    meow.meowBasicCd = cfg.basicCooldown;
+  }
+}
+
+// 좌우 이동: 변을 토글하고 반대편 끝으로 옮긴다(floating이라 x만 옮기면 됨). hurtbox는
+// meow.x를 따라가므로 드론 막타/투사체 판정도 새 위치로 함께 옮겨간다.
+function meowMoveSides(meow) {
+  meow.meowSide = -meow.meowSide;
+  meow.x = meow.meowSide < 0 ? 5 : stage.widthPx - meow.w - 5;
+}
+
+// 본체를 가로지르는 절반 띠의 AABB. upper=3·4층(상단), lower=1·2층(하단). 경계는
+// 3층 표면(floorSurfaces[1]) — 반대 절반으로 가면 회피된다.
+function meowBandBox(half) {
+  const split = stage.floorSurfaces[1];
+  if (half === "upper") return { x: 0, y: 0, w: stage.widthPx, h: split };
+  return { x: 0, y: split, w: stage.widthPx, h: stage.heightPx - split };
+}
+
+// ① 전체 공격: 위/아래 절반 랜덤으로 맵 가로 전체 띠를 예고→발동(패링 불가, dmg bandDamage).
+function spawnMeowBand(meow) {
+  const half = Math.random() < 0.5 ? "upper" : "lower";
+  meowAoes.push({ type: "band", half, state: "telegraph", t: 0, hit: false, alive: true });
+}
+
+// ② 지진: 예고→발동(패링 불가). active 첫 프레임에 바닥에 있으면 quakeStun초 행동불가
+// (점프로 회피). 가로 판정 없음(바닥 충격) — onGround만 본다.
+function spawnMeowQuake(meow) {
+  meowAoes.push({ type: "quake", state: "telegraph", t: 0, hit: false, alive: true });
+}
+
+// ①② 진행(키디언 라인 lineBand / 다야 가시 spike의 telegraph→active 구조 재활용).
+function updateMeowAoes(dt) {
+  const meow = enemies.find((e) => e.role === "meow");
+  const cfg = meow ? meow.ai.meow : null;
+  for (const a of meowAoes) {
+    if (!a.alive) continue;
+    if (!cfg) { a.alive = false; continue; } // 본체 없으면(언로드) 잔재 제거
+    a.t += dt;
+    if (a.type === "band") {
+      if (a.state === "telegraph") {
+        if (a.t >= cfg.bandTelegraph) { a.state = "active"; a.t = 0; a.hit = false; }
+      } else { // active: 선택 절반 ON. 접촉 1회 피해(패링 불가).
+        if (!player.dead && !a.hit && aabbOverlap(meowBandBox(a.half), getHurtbox(player))) {
+          damagePlayer(cfg.bandDamage);
+          a.hit = true;
+        }
+        if (a.t >= cfg.bandActive) a.alive = false;
+      }
+    } else { // quake
+      if (a.state === "telegraph") {
+        if (a.t >= cfg.quakeTelegraph) {
+          a.state = "active"; a.t = 0;
+          ScreenShake.shake(SHOCKWAVE_SHAKE_MAG, SHOCKWAVE_SHAKE_TIME);
+          // 발동 첫 프레임: 바닥에 있으면 행동불가(점프 중이면 회피, dmg는 0).
+          if (!a.hit) {
+            a.hit = true;
+            if (player.onGround && !player.dead) player.staggerTime = cfg.quakeStun;
+          }
+        }
+      } else if (a.t >= cfg.quakeActive) a.alive = false;
+    }
+  }
+  meowAoes = meowAoes.filter((a) => a.alive);
+}
+
+// ③/④ 평타 분기: 근거리(clawRange 안)이고 상공이 아니면 ③ 전방 클로, 그 외(상공/원거리)
+// 는 ④ 미사일. '상공' = 플레이어 중심이 본체 중심보다 aloftMargin 이상 위.
+function fireMeowBasic(meow) {
+  const cfg = meow.ai.meow;
+  const mcx = meow.x + meow.w / 2, mcy = meow.y + meow.h / 2;
+  const pcx = player.x + player.w / 2, pcy = player.y + player.h / 2;
+  const horiz = Math.abs(pcx - mcx);
+  const aloft = pcy < mcy - cfg.aloftMargin;
+  if (horiz <= cfg.clawRange && !aloft) spawnMeowClaw(meow);
+  else spawnMeowMissiles(meow);
+}
+
+// ③ 전방 클로: 플레이어 세로 위치에서 본체 앞면 → facing 방향으로 직진(패링 가능, dmg
+// clawDamage). 패링하면 그로기 게이지 +1 누적(updateMeowClaw).
+function spawnMeowClaw(meow) {
+  const cfg = meow.ai.meow;
+  const dir = meow.facing; // 플레이어 쪽
+  const sx = dir > 0 ? meow.x + meow.w + cfg.clawW / 2 : meow.x - cfg.clawW / 2; // 본체 앞면
+  const sy = player.y + player.h / 2; // 플레이어와 같은 가로줄
+  const p = makeProjectile(sx, sy, dir * cfg.clawSpeed, 0, {
+    w: cfg.clawW, h: cfg.clawH, kind: "meowClaw", damage: cfg.clawDamage, parryable: true,
+  });
+  p.shooter = meow;
+  projectiles.push(p);
+}
+
+// ④ 미사일 missileCount발: 머리 위로 솟아(rise) hover초 정지 후 발사. 발사 모드는 랜덤:
+// (a)동시(전탄 fireDelay 0) / (b)missileSeqGap초 순차. 각 발은 패링 가능(패링 시 소멸+게이지+1).
+// 나이아 볼리(scheduleNaiaLasers)와 같은 '솟음→정지→조준 발사' 흐름.
+function spawnMeowMissiles(meow) {
+  const cfg = meow.ai.meow;
+  const sequential = Math.random() < 0.5; // (a)동시 / (b)순차
+  const mcx = meow.x + meow.w / 2;
+  const headY = meow.y; // 머리(상단)
+  for (let i = 0; i < cfg.missileCount; i++) {
+    // 머리 위 가로로 펼쳐 솟는다(좌우 대칭).
+    const spread = (i - (cfg.missileCount - 1) / 2) * (cfg.missileW * 1.6);
+    const p = makeProjectile(mcx + spread, headY, 0, -cfg.missileRiseSpeed, {
+      w: cfg.missileW, h: cfg.missileH, kind: "meowMissile", damage: cfg.missileDamage, parryable: true,
+    });
+    p.shooter = meow;
+    p.phase = "rising"; // rising(솟음) → hover(정지) → flying(조준 발사)
+    p.hoverY = headY - cfg.missileRise; // 이 높이까지 솟고 멈춤
+    p.hoverT = cfg.missileHover; // 정지 시간
+    p.fireDelay = sequential ? i * cfg.missileSeqGap : 0; // 순차면 발마다 지연
+    projectiles.push(p);
+  }
+}
+
+// 미사일 1발 갱신. rising→hover(정지+발사 대기)→flying(플레이어 조준 직진). 어느 단계든
+// 패링(getAttackHitbox 겹침) 시 소멸하며 본체 그로기 게이지 +1. flying 중 플레이어 명중 시 피해.
+function updateMeowMissile(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  // 패링: 단계 무관, 플레이어 공격 active 히트박스와 겹치면 소멸 + 게이지 +1.
+  if (p.parryable && p.parryLock <= 0) {
+    const atkHb = getAttackHitbox();
+    if (atkHb && aabbOverlap(atkHb, p)) { parryMeowShot(p); return; }
+  }
+  const cfg = p.shooter.ai.meow;
+  if (p.phase === "rising") {
+    p.y += p.vy * dt;
+    if (p.y <= p.hoverY) { p.y = p.hoverY; p.phase = "hover"; p.vy = 0; }
+  } else if (p.phase === "hover") {
+    // hover 동안 발사 지연을 함께 흘린다(순차 모드: 앞 발부터 차례로 발사).
+    p.hoverT -= dt;
+    if (p.hoverT <= 0) {
+      if (p.fireDelay > 0) { p.fireDelay -= dt; return; }
+      const v = aimVel(projCenterX(p), projCenterY(p), projCenterX(player), projCenterY(player), cfg.missileSpeed);
+      p.vx = v.vx; p.vy = v.vy;
+      p.angle = Math.atan2(v.vy, v.vx);
+      p.phase = "flying";
+    }
+  } else { // flying
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (projOutOfBounds(p)) { p.alive = false; return; }
+    if (!player.dead && aabbOverlap(p, getHurtbox(player))) {
+      damagePlayer(p.damage);
+      p.alive = false;
+    }
+  }
+}
+
+// ③ 전방 클로 갱신. 패링 시 소멸 + 게이지 +1, 미패링 명중 시 피해. 직진하다 화면 밖 소멸.
+function updateMeowClaw(p, dt) {
+  if (p.parryLock > 0) p.parryLock -= dt;
+  if (p.parryable && p.parryLock <= 0) {
+    const atkHb = getAttackHitbox();
+    if (atkHb && aabbOverlap(atkHb, p)) { parryMeowShot(p); return; }
+  }
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+  if (projOutOfBounds(p)) { p.alive = false; return; }
+  if (!player.dead && aabbOverlap(p, getHurtbox(player))) {
+    damagePlayer(p.damage);
+    p.alive = false;
+  }
+}
+
+// ③④ 패링 공통: 탄을 소멸시키고 본체 그로기 게이지 +1 적립(15 도달 시 그로기). 본체가
+// 살아 있을 때만(addGroggyGauge가 그로기/무적/사망 가드).
+function parryMeowShot(p) {
+  parryFlash = 0.15;
+  TimeControl.freeze(PARRY_HIT_STOP);
+  p.alive = false;
+  const meow = p.shooter;
+  if (meow && meow.alive) addGroggyGauge(meow, 1);
+}
+
+// M.E.O.W ①②(전체공격/지진) 렌더 — renderProjectiles에서 호출(월드 좌표, camera 적용).
+function renderMeowAoes() {
+  for (const a of meowAoes) {
+    if (!a.alive) continue;
+    if (a.type === "band") {
+      const b = meowBandBox(a.half);
+      const x = b.x - camera.x, y = b.y - camera.y;
+      if (a.state === "telegraph") {
+        ctx.fillStyle = "rgba(255, 80, 80, 0.18)"; // 예고: 옅은 적색 절반
+        ctx.fillRect(x, y, b.w, b.h);
+        ctx.strokeStyle = "rgba(255, 80, 80, 0.7)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, b.w, b.h);
+      } else {
+        ctx.fillStyle = "rgba(255, 60, 60, 0.55)"; // 발동: 진한 적색 띠
+        ctx.fillRect(x, y, b.w, b.h);
+      }
+    } else { // quake
+      const isTele = a.state === "telegraph";
+      ctx.fillStyle = isTele ? "rgba(180, 120, 60, 0.18)" : "rgba(200, 110, 40, 0.5)";
+      const groundY = stage.floorSurfaces[stage.floorSurfaces.length - 1] - camera.y;
+      ctx.fillRect(-camera.x, groundY - 8, stage.widthPx, stage.heightPx - groundY + 16);
+    }
+  }
+}
+
 // main.js update()에서 호출. dt는 시간배율이 적용된 scaledDt.
 function updateProjectiles(dt) {
   updateShadyWeapons(dt);
@@ -1139,6 +1384,7 @@ function updateProjectiles(dt) {
   updateSila(dt); // 실라 화살 발사 결정(쿨)
   updateSilaMobs(dt); // 화살 착탄 잡몹 근접 폭발
   updateDroneSpawner(dt); // 스테이지5 드론 출몰(4초마다 우변, 본체 생존 시) — drones.js
+  updateMeowPatterns(dt); // 스테이지5 M.E.O.W 본체(좌우 이동 + ①②③④)
   for (const p of projectiles) {
     if (!p.alive) continue;
     if (p.kind === "big") updateBigDagger(p, dt);
@@ -1147,6 +1393,8 @@ function updateProjectiles(dt) {
     else if (p.kind === "stone") updateStone(p, dt);
     else if (p.kind === "arrow") updateArrow(p, dt);
     else if (p.kind === "droneBullet") updateDroneBullet(p, dt); // 스테이지5 드론 탄 — drones.js
+    else if (p.kind === "meowClaw") updateMeowClaw(p, dt); // 스테이지5 M.E.O.W ③ 전방 클로
+    else if (p.kind === "meowMissile") updateMeowMissile(p, dt); // 스테이지5 M.E.O.W ④ 미사일
     else updateSimpleProjectile(p, dt);
   }
   projectiles = projectiles.filter((p) => p.alive);
@@ -1167,6 +1415,10 @@ function renderProjectiles() {
       color = p.state === "reflected" ? "#ffe066" : "#c77bff"; // 반사=금빛, 조준=다야 보라
     } else if (p.kind === "droneBullet") {
       color = p.state === "reflected" ? "#ffe066" : "#ff6b6b"; // 반사=금빛, 조준=드론 적색
+    } else if (p.kind === "meowClaw") {
+      color = "#ff9f43"; // M.E.O.W ③ 전방 클로(주황 — 패링 가능)
+    } else if (p.kind === "meowMissile") {
+      color = p.phase === "flying" ? "#ff6b9d" : "#ffd1e0"; // ④ 발사=진분홍, 솟음/정지=옅은 분홍
     }
     ctx.save();
     ctx.translate(projCenterX(p) - camera.x, projCenterY(p) - camera.y);
@@ -1185,6 +1437,7 @@ function renderProjectiles() {
   renderNaiaLasers(); // 나이아 물줄기 레이저(예고 가는 선 / 발사 두꺼운 띠)
   renderNaiaWave(); // 나이아 파도(진행 중인 세로 물벽)
   renderShadyWeapons(); // 셰이디 차원문 난사 완주 시 낙하하는 거대 무기
+  renderMeowAoes(); // 스테이지5 M.E.O.W ①전체공격/②지진(예고/발동)
 }
 
 // 나이아 레이저: telegraph는 가는 예고선(곧 어디로 올지) + 옅은 띠, firing은 두꺼운

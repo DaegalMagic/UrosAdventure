@@ -245,10 +245,32 @@ const ENEMY_AI = {
   // 광폭화(비비 포식 시 lineEnraged=true): 발사 쿨이 enrageCdMult배 빨라지고, 라인이
   // 패링 불가가 되며(=봉인 불가) 빨갛게 바뀐다 — combat.js applyDevourRipple가 건다.
   kidian: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true, lineShooter: { cdMin: 5, cdMax: 7, damage: 2, telegraph: 1.0, fire: 0.15, parryCdBonus: 10, sealParries: 5, enrageCdMult: 3 } },
-  // 스테이지5(M.E.O.W 솔로전, 보상=새총). 0단계(맵+뼈대) 시점엔 AI 없는 정지형
-  // placeholder다 — 4층 높이 거대 보스의 좌우 이동·본체 패턴(전체공격/지진/전방/미사일)·
-  // 그로기15·드론 연동은 이후 단계에서 붙인다. SSOT: 메모리 stage5-meow-spec.md.
-  meow: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true },
+  // 스테이지5(M.E.O.W 솔로전, 보상=새총). 4층 높이 거대 보스 — 일반 CHASE FSM을 타지
+  // 않고(stationary) projectiles.js updateMeowPatterns가 좌우 이동·본체 4패턴을 전담한다.
+  // 그로기 게이지는 15로 오버라이드(main.js startStage에서 meow.groggyGaugeMax=15).
+  //   - 좌우 이동: moveInterval초마다 '다음 패턴 슬롯'을 이동으로 대체(좌↔우 변).
+  //   - 쿨 slotCooldown초마다 ①/② 중 랜덤(둘 다 패링 불가):
+  //     ① 전체 공격: 위/아래 절반(3·4층 or 1·2층) 띠. telegraph→active, dmg bandDamage.
+  //     ② 지진: telegraph→active. dmg 0이지만 active 첫 프레임에 바닥에 있으면 quakeStun초
+  //        행동불가(점프로 회피). 림 내려찍기(rimUpdateSlamStrike) 구조 참조.
+  //   - 평타 ③/④(basicCooldown초마다, 플레이어 위치 기반, 둘 다 패링 가능 → 패링 시 게이지+1):
+  //     ③ 전방 클로: 플레이어가 근거리(clawRange 안)·비상공일 때 정면으로 직진. dmg clawDamage.
+  //     ④ 미사일 missileCount발: 상공/원거리일 때. 머리서 위로 솟음 → missileHover초 정지 →
+  //        랜덤 (a)동시 / (b)missileSeqGap초 순차로 플레이어 조준 발사. dmg missileDamage/발.
+  // SSOT: 메모리 stage5-meow-spec.md "본체 위치/이동"·"본체 패턴"·"그로기".
+  meow: {
+    chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0, stationary: true,
+    meow: {
+      moveInterval: 30, slotCooldown: 8, basicCooldown: 2.5,
+      bandTelegraph: 1.2, bandActive: 0.4, bandDamage: 2, // ① 전체 공격
+      quakeTelegraph: 1.0, quakeActive: 0.4, quakeStun: 0.5, // ② 지진(점프로 회피)
+      clawRange: 280, clawSpeed: 520, clawDamage: 1, clawW: 70, clawH: 90, // ③ 전방 클로
+      // ④ 미사일: 위로 missileRise만큼 솟아(riseSpeed) hover초 정지 후 발사(speed로 조준).
+      missileCount: 5, missileRise: 90, missileRiseSpeed: 360, missileHover: 0.6,
+      missileSeqGap: 0.2, missileSpeed: 460, missileDamage: 0.4, missileW: 18, missileH: 18,
+      aloftMargin: 80, // 플레이어가 본체 중심보다 이만큼 위면 '상공'(→④ 미사일)
+    },
+  },
   // 스테이지5 드론: 출몰/추격/탄/막타발사 수치는 drones.js 상수로 관리한다. 여기선 일반
   // FSM을 타지 않는 placeholder만 둔다(updateEnemies가 role==="drone"을 updateDrone에 위임).
   drone: { chaseSpeed: 0, attackRangeX: 0, basic: null, special: null, floorPref: 0 },

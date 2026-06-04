@@ -356,7 +356,10 @@ function updatePowerStruggle(dt) {
 function addGroggyGauge(enemy, amount) {
   if (enemy.groggyTime > 0 || enemy.permaGroggy || enemy.invincible) return;
   enemy.groggyGauge += amount;
-  if (enemy.groggyGauge >= GROGGY_GAUGE_MAX) enterGroggy(enemy);
+  // 임계는 적별로 오버라이드 가능(M.E.O.W는 groggyGaugeMax=15: 드론 막타 3×5 또는 ③④
+  // 패링 누적). 미지정이면 글로벌 GROGGY_GAUGE_MAX(=3)를 쓴다.
+  const max = enemy.groggyGaugeMax ?? GROGGY_GAUGE_MAX;
+  if (enemy.groggyGauge >= max) enterGroggy(enemy);
 }
 
 // 누적 그로기(게이지 오버). 게이지(groggyGauge)는 여기서 비우지 않는다 — 그로기가

@@ -263,3 +263,224 @@ suite("스테이지5 · 드론", (t) => {
     expect(d.alive).toBeTruthy();
   });
 });
+
+// ── 2단계: 본체 패턴 + 그로기15 ──────────────────────────────────────────────
+// M.E.O.W는 정지형 거대 보스 — updateMeowPatterns(projectiles.js)가 좌우 이동 + 4패턴을
+// 전담한다. ①전체공격/②지진=패링 불가, ③전방/④미사일=패링 가능(패링 시 게이지+1).
+// 그로기 게이지 15(드론 막타 3×5 또는 ③④ 패링) 도달 시 5초 그로기. SSOT [[stage5-meow-spec]].
+suite("스테이지5 · 본체 패턴", (t) => {
+  const cfgOf = (g) => g.eval("ENEMY_AI.meow.meow");
+
+  // 그로기 게이지 15 오버라이드(글로벌 3): 12까지는 멀쩡, 15에서 그로기 진입.
+  t.test("그로기15: 12 누적은 멀쩡 / 15 도달 시 5초 그로기", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    expect(meow.groggyGaugeMax).toBe(15);
+    for (let i = 0; i < 4; i++) g.addGroggyGauge(meow, 3); // 12 < 15
+    expect(meow.groggyTime).toBe(0);
+    expect(meow.groggyGauge).toBe(12);
+    g.addGroggyGauge(meow, 3); // 15 → 그로기
+    expect(meow.groggyTime).toBe(g.eval("GROGGY_TIME")); // 5초
+  });
+
+  // 좌우 이동: 30초 누적 후 다음 슬롯이 '이동'으로 대체된다(①/② 대신). 우→좌로 옮기고
+  // 그 슬롯엔 전체공격/지진이 나오지 않는다.
+  t.test("좌우 이동: 30초 슬롯이 이동으로 대체(우→좌, 패턴 없음)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    g.updateMeowPatterns(0.016); // 첫 호출: meow 슬롯/이동 타이머 초기화
+    const x0 = meow.x; // 우측 변
+    meow.meowMoveTimer = 31; // 이동 예약(≥30)
+    meow.meowSlotCd = 0.001; // 슬롯 즉시 발동
+    g.meowAoes = [];
+    g.updateMeowPatterns(0.016); // 슬롯 → 이동으로 소비
+    expect(meow.x).toBeLessThan(x0); // 우 → 좌(반대 변)
+    expect(meow.x).toBeCloseTo(5, 1); // 왼쪽 끝에 붙음
+    expect(g.meowAoes.length).toBe(0); // 이동이 슬롯을 먹어 ①/② 미발동
+    expect(meow.meowMoveTimer).toBe(0); // 이동 타이머 리셋
+  });
+
+  // ① 전체 공격: 위/아래 절반 띠. 같은 절반에 있으면 dmg 2, 반대 절반으로 가면 무피해.
+  t.test("① 전체공격: 같은 절반 dmg2 / 반대 절반 회피(패링 불가)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0"); // half = upper(상단 3·4층)
+    const meow = g.bossOf("meow");
+    g.spawnMeowBand(meow);
+    const a = g.meowAoes[0];
+    expect(a.type).toBe("band");
+    expect(a.half).toBe("upper");
+    expect(a.state).toBe("telegraph");
+    const p = g.player;
+    // 상단(upper)에 있는 플레이어: active에서 dmg 2.
+    p.x = 100; p.y = 230; const hp0 = p.hp;
+    a.state = "active"; a.t = 0; a.hit = false;
+    g.updateMeowAoes(0.016);
+    expect(p.hp).toBe(hp0 - cfgOf(g).bandDamage); // 2
+    // 반대 절반(하단)으로 피하면 무피해(새 band·새 위치).
+    const g2 = loadGame();
+    g2.startStage("스테이지 5");
+    g2.eval("Math.random=()=>0"); // upper
+    g2.spawnMeowBand(g2.bossOf("meow"));
+    const a2 = g2.meowAoes[0];
+    const p2 = g2.player;
+    p2.x = 100; p2.y = 460; const hp2 = p2.hp; // 하단(1·2층)
+    a2.state = "active"; a2.t = 0; a2.hit = false;
+    g2.updateMeowAoes(0.016);
+    expect(p2.hp).toBe(hp2); // upper 띠는 하단을 안 때림
+  });
+
+  // ② 지진: 바닥에 있으면 active 첫 프레임에 stun(quakeStun초)·dmg 0. 점프 중이면 회피.
+  t.test("② 지진: 바닥이면 stun·무피해 / 공중이면 회피(패링 불가)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.spawnMeowQuake(g.bossOf("meow"));
+    const a = g.meowAoes[0];
+    expect(a.type).toBe("quake");
+    const p = g.player;
+    p.onGround = true; p.staggerTime = 0; const hp0 = p.hp;
+    g.updateMeowAoes(0.016); // 아직 telegraph → 무영향
+    expect(p.staggerTime).toBe(0);
+    a.t = cfgOf(g).quakeTelegraph; // 예고 경과 직전 → 다음 틱에 active 전환+발동
+    g.updateMeowAoes(0.016);
+    expect(p.staggerTime).toBe(cfgOf(g).quakeStun); // 0.5초 행동불가
+    expect(p.hp).toBe(hp0); // dmg 0
+    // 점프 중(onGround=false)이면 stun 안 걸림.
+    const g2 = loadGame();
+    g2.startStage("스테이지 5");
+    g2.spawnMeowQuake(g2.bossOf("meow"));
+    const a2 = g2.meowAoes[0];
+    g2.player.onGround = false; g2.player.staggerTime = 0;
+    a2.t = cfgOf(g2).quakeTelegraph;
+    g2.updateMeowAoes(0.016);
+    expect(g2.player.staggerTime).toBe(0); // 점프로 회피
+  });
+
+  // ③ 전방 클로: 플레이어가 근거리·비상공이면 평타가 클로로 나온다(미사일 아님).
+  t.test("③ 전방: 근거리·비상공 → 클로 발사", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    const p = g.player;
+    const mcx = meow.x + meow.w / 2, mcy = meow.y + meow.h / 2;
+    p.x = mcx - 120; p.y = mcy - p.h / 2; // 근거리(±120 < clawRange)·같은 가로줄
+    meow.facing = -1; // 플레이어(왼쪽) 쪽
+    g.fireMeowBasic(meow);
+    const claws = g.projectiles.filter((pr) => pr.kind === "meowClaw");
+    expect(claws.length).toBe(1);
+    expect(g.projectiles.filter((pr) => pr.kind === "meowMissile").length).toBe(0);
+    expect(claws[0].vx).toBeLessThan(0); // 왼쪽(플레이어 쪽)으로
+  });
+
+  // ③ 클로: 미패링 명중 dmg1 / 패링 시 소멸 + 본체 그로기 게이지 +1.
+  t.test("③ 클로: 명중 dmg1 / 패링 시 게이지+1·소멸", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    const p = g.player;
+    meow.facing = -1;
+    p.x = meow.x - 200; p.y = 300;
+    g.spawnMeowClaw(meow);
+    const c = g.projectiles.find((pr) => pr.kind === "meowClaw");
+    // 미패링 명중: dmg 1.
+    c.x = p.x + p.w / 2; c.y = p.y + p.h / 2; p.attack = null;
+    const hp0 = p.hp;
+    g.updateMeowClaw(c, 0.016);
+    expect(p.hp).toBe(hp0 - cfgOf(g).clawDamage); // 1
+    expect(c.alive).toBeFalsy();
+    // 패링: 게이지 +1 + 소멸.
+    const g2 = loadGame();
+    g2.startStage("스테이지 5");
+    const meow2 = g2.bossOf("meow");
+    const p2 = g2.player;
+    meow2.facing = -1; p2.x = meow2.x - 200; p2.y = 300;
+    g2.spawnMeowClaw(meow2);
+    const c2 = g2.projectiles.find((pr) => pr.kind === "meowClaw");
+    p2.attack = g2.eval("ATTACKS").playerSlash; p2.attackElapsed = 0.05; p2.attackDir = 1;
+    const atk = g2.getAttackHitbox();
+    c2.x = atk.x + 5; c2.y = atk.y + 5;
+    const gauge0 = meow2.groggyGauge;
+    g2.updateMeowClaw(c2, 0.016);
+    expect(c2.alive).toBeFalsy();
+    expect(meow2.groggyGauge).toBe(gauge0 + 1);
+  });
+
+  // ④ 미사일: 상공/원거리면 평타가 미사일 5발로 나온다(클로 아님).
+  t.test("④ 미사일: 원거리 → 5발 발사(머리 위로 솟음)", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    g.eval("Math.random=()=>0"); // 발사 모드 결정적
+    const meow = g.bossOf("meow");
+    const p = g.player;
+    p.x = 50; p.y = 300; // 원거리(좌측 끝)
+    g.fireMeowBasic(meow);
+    const ms = g.projectiles.filter((pr) => pr.kind === "meowMissile");
+    expect(ms.length).toBe(cfgOf(g).missileCount); // 5발
+    expect(ms.every((m) => m.phase === "rising")).toBeTruthy(); // 머리서 위로 솟는 중
+    expect(ms.every((m) => m.vy < 0)).toBeTruthy(); // 위로
+  });
+
+  // ④ 미사일: rising→hover→flying 후 명중 dmg 0.4 / 패링 시 게이지+1·소멸.
+  t.test("④ 미사일: flying 명중 dmg0.4 / 패링 시 게이지+1·소멸", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    const p = g.player;
+    g.spawnMeowMissiles(meow);
+    const m = g.projectiles.find((pr) => pr.kind === "meowMissile");
+    // flying으로 강제 전환해 명중 판정만 본다.
+    m.phase = "flying"; m.vx = 0; m.vy = 0;
+    m.x = p.x + p.w / 2; m.y = p.y + p.h / 2; p.attack = null;
+    const hp0 = p.hp;
+    g.updateMeowMissile(m, 0.016);
+    expect(p.hp).toBeCloseTo(hp0 - cfgOf(g).missileDamage, 1e-6); // 0.4
+    expect(m.alive).toBeFalsy();
+    // 패링: 게이지 +1 + 소멸.
+    const g2 = loadGame();
+    g2.startStage("스테이지 5");
+    const meow2 = g2.bossOf("meow");
+    const p2 = g2.player;
+    p2.x = 400; p2.y = 300;
+    g2.spawnMeowMissiles(meow2);
+    const m2 = g2.projectiles.find((pr) => pr.kind === "meowMissile");
+    p2.attack = g2.eval("ATTACKS").playerSlash; p2.attackElapsed = 0.05; p2.attackDir = 1;
+    const atk = g2.getAttackHitbox();
+    m2.x = atk.x + 2; m2.y = atk.y + 2; m2.parryLock = 0;
+    const gauge0 = meow2.groggyGauge;
+    g2.updateMeowMissile(m2, 0.016);
+    expect(m2.alive).toBeFalsy();
+    expect(meow2.groggyGauge).toBe(gauge0 + 1);
+  });
+
+  // 그로기 진입(통합): ③④ 패링 15회로도 게이지15 → 그로기. (드론 막타 경로는 그로기15
+  // 케이스에서 확인.) 여기선 패링 누적(parryMeowShot)이 게이지를 채워 그로기로 가는지 본다.
+  t.test("그로기 진입: ③④ 패링 누적 15 → 5초 그로기", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    for (let i = 0; i < 14; i++) {
+      const c = { alive: true, shooter: meow };
+      g.parryMeowShot(c); // 게이지 +1씩
+    }
+    expect(meow.groggyTime).toBe(0); // 14 < 15
+    g.parryMeowShot({ alive: true, shooter: meow }); // 15 → 그로기
+    expect(meow.groggyTime).toBe(g.eval("GROGGY_TIME"));
+  });
+
+  // 그로기 중엔 새 패턴/이동을 내지 않는다(updateMeowPatterns가 조기 반환).
+  t.test("그로기 중: 패턴/이동 정지", () => {
+    const g = loadGame();
+    g.startStage("스테이지 5");
+    const meow = g.bossOf("meow");
+    g.updateMeowPatterns(0.016); // 초기화
+    meow.groggyTime = 3; // 그로기 중
+    meow.meowSlotCd = 0.001; meow.meowMoveTimer = 31;
+    g.meowAoes = [];
+    const x0 = meow.x;
+    g.updateMeowPatterns(0.016);
+    expect(g.meowAoes.length).toBe(0); // ①/② 미발동
+    expect(meow.x).toBe(x0); // 이동도 정지
+  });
+});

@@ -73,6 +73,7 @@ globalThis.__api = {
   get naiaLaserQueue(){return naiaLaserQueue}, set naiaLaserQueue(v){naiaLaserQueue=v},
   get naiaWave(){return naiaWave}, set naiaWave(v){naiaWave=v},
   get shadyWeapons(){return shadyWeapons}, set shadyWeapons(v){shadyWeapons=v},
+  get meowAoes(){return meowAoes}, set meowAoes(v){meowAoes=v},
   eval: (src) => eval(src),
 };`;
 
